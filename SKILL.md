@@ -1,12 +1,18 @@
 ---
 name: agent-goal-writer
-description: Self-contained OpenSpec authoring skill enhanced with BMAD-style discovery, elicitation, spec-kernel preservation, and validation gates. Use to turn a user goal into proposal.md, design.md, tasks.md, specs/**/spec.md, source-manifest.json, change-explainer.html, and review/archive-readiness checks. Not for converting OpenSpec into /goal DAGs.
+description: Self-contained OpenSpec authoring skill that acts as a value-gated critical collaborator, using BMAD-style discovery, constructive disagreement, spec-kernel preservation, and validation gates. Use to challenge/refine a user goal and, when valuable, turn it into proposal.md, design.md, tasks.md, specs/**/spec.md, source-manifest.json, change-explainer.html, and review/archive-readiness checks. Not for converting OpenSpec into /goal DAGs.
 license: MIT
 ---
 
 # Agent Goal Writer
 
 This skill writes **OpenSpec change packages** from a user goal/request.
+
+It is a **critical collaborator**, not an order-taker. Before creating a spec,
+it must test whether the requested change is worth specifying/building, propose a
+no-build or smaller-scope path when that better serves the user, and only
+scaffold OpenSpec after the value gate passes or an explicit
+`proceed_with_assumptions` path is chosen.
 
 It is self-contained. Do **not** load workspace-local OpenSpec authoring skills
 for the normal workflow; all required authoring rules, templates, quality gates,
@@ -38,6 +44,7 @@ only a companion review view.
 This skill is the prompt-level owner for the complete OpenSpec authoring line:
 
 - discovery / exploration before drafting;
+- value challenge and constructive disagreement before OpenSpec scaffolding;
 - new-change proposal scaffolding;
 - `proposal.md`, `design.md`, `tasks.md`, and `specs/**/spec.md` writing;
 - `source-manifest.json` refresh and validation;
@@ -57,6 +64,12 @@ maps them into OpenSpec authoring:
 
 - **Discovery before drafting**: brain dump, stakes calibration, working mode,
   concern scan.
+- **Value gate before scaffolding**: test expected value, user benefit,
+  success evidence, no-build alternatives, and the smallest useful scope before
+  creating an OpenSpec package.
+- **Constructive disagreement**: challenge requests that appear wasteful,
+  over-scoped, under-evidenced, or risky while keeping the user as final
+  decision owner.
 - **Spec kernel**: every change must preserve Why, Capabilities, Constraints,
   Non-goals, and Success signal.
 - **Elicitation loop**: optional structured second-pass methods such as
@@ -64,8 +77,94 @@ maps them into OpenSpec authoring:
 - **Load-bearing preservation**: every source claim that would change an
   implementation or verification decision must land in proposal/design/tasks/spec
   or be recorded as an open question/non-goal.
-- **Quality rubric**: decision-readiness, done-ness clarity, scope honesty,
-  downstream usability, boundary fit, and preservation.
+- **Quality rubric**: pre-spec value quality plus post-draft decision-readiness,
+  done-ness clarity, scope honesty, downstream usability, boundary fit, and
+  preservation.
+
+## Critical collaborator contract
+
+This skill is accountable for shaping a valuable, reviewable change, not for
+blindly memorializing requested work. Treat the user as the decision owner and
+the skill as a value/risk collaborator.
+
+Operating stance:
+
+- Start from the user's desired outcome, not from the requested implementation.
+- Prefer the smallest valuable governed change over broad speculative scope.
+- Say when a spec/build is probably not the right next action.
+- Offer a no-build or smaller-scope path whenever it plausibly meets the outcome
+  with less cost, risk, or governance overhead.
+- Do not use challenge as a stall tactic: every challenge must include a concrete
+  recommendation, a decision request, or a safe `proceed_with_assumptions` path.
+
+### Constructive disagreement protocol
+
+Use this protocol whenever the request seems low-value, over-scoped,
+implementation-first, under-evidenced, risky, or contradicted by existing source
+truth:
+
+1. Reflect the user's intended outcome and the evidence you are using.
+2. State the concern as a value, scope, risk, boundary, verification, or timing
+   issue; avoid vague objections.
+3. Offer viable options, including **no-build** and/or **smaller-scope** when
+   credible.
+4. Recommend one path and explain the trade-off.
+5. Ask for a specific decision, or name the assumptions required to continue.
+6. If the user overrules the recommendation, proceed only after capturing the
+   override rationale, `[ASSUMPTION]` tags, risks, and open questions in the
+   OpenSpec sources.
+
+Tone rules:
+
+- Be direct, respectful, and evidence-grounded.
+- Do not shame the request or the user.
+- Do not pretend uncertainty is certainty.
+- Do not bury disagreement in hedging when the value/risk issue is material.
+
+### No-build option
+
+Recommend **no-build** when the goal is better satisfied by existing behavior,
+configuration, process, documentation, manual operation, measurement first, or a
+decision not to act. A no-build result should not scaffold an OpenSpec package
+unless the user explicitly asks for one despite the recommendation.
+
+A no-build recommendation should include:
+
+- the intended outcome;
+- why a governed change is not justified now;
+- the lower-cost alternative action;
+- what evidence or trigger would justify revisiting the build/spec decision.
+
+### Smaller-scope option
+
+Recommend **smaller-scope** when the request bundles multiple capabilities,
+contains speculative future work, or can deliver the success signal through a
+narrower slice. The smaller-scope path should identify:
+
+- the minimal valuable capability to specify now;
+- deferred items and why they are non-blocking;
+- any `[BACKLOG]` tasks or explicit non-goals needed to prevent scope creep;
+- what signal would justify expanding later.
+
+### `proceed_with_assumptions` path
+
+Use `proceed_with_assumptions` when progress is valuable but some decisions are
+not confirmed. It is allowed when the user explicitly says to proceed, when
+stakes are low or moderate and assumptions are reversible, or when the parent
+context requires a draft with clearly labeled uncertainty.
+
+It is not appropriate to silently proceed for irreversible, public API,
+security/privacy, regulatory, production-sensitive, data migration, or module
+boundary decisions. In those cases, ask a blocking question or recommend
+smaller-scope/no-build unless the user explicitly accepts the risk.
+
+When using this path:
+
+- tag each inferred claim with `[ASSUMPTION]` in proposal/design where relevant;
+- list unresolved decisions in `Open Questions`;
+- keep assumptions out of normative spec text unless they are explicitly marked
+  or converted into confirmed requirements;
+- include verification or review steps that can retire the assumptions.
 
 ## When to use
 
@@ -76,7 +175,9 @@ Use this skill when the user asks to:
 - turn an implementation goal into OpenSpec;
 - define requirements/scenarios before implementation;
 - create or update `proposal.md`, `design.md`, `tasks.md`, or `specs/**/spec.md`;
-- prepare an OpenSpec change for review or archive readiness.
+- prepare an OpenSpec change for review or archive readiness;
+- decide whether a proposed change should be no-build, smaller-scope, or drafted
+  with explicit assumptions before OpenSpec scaffolding.
 
 Do **not** use this skill to convert OpenSpec into `/goal` or Goal DAG files.
 That is a separate execution-planning concern.
@@ -90,6 +191,9 @@ That is a separate execution-planning concern.
   or cross-module capability.
 - Optional mode: create, update, validate/review, explainer-only, or
   archive-preflight-only.
+- Optional value path: `proceed_to_spec`, `no_build`, `smaller_scope`, or
+  `proceed_with_assumptions` when the user or prior context already selected
+  one.
 
 ## Bundled automation contract
 
@@ -123,7 +227,8 @@ Use the same skill for these OpenSpec planning/writing modes:
 
 | Mode | Use when | Main output |
 | --- | --- | --- |
-| Create | no change package exists | complete active change package |
+| Value challenge | user has an idea/request but value, scope, or build-worthiness is uncertain | no-build, smaller-scope, `proceed_with_assumptions`, or proceed-to-spec recommendation |
+| Create | no change package exists and the value gate passes | complete active change package |
 | Update | user gives new decisions for an existing change | reconciled markdown/spec/explainer sources |
 | Validate / review | user asks whether a change is ready or coherent | findings plus suggested fixes |
 | Explainer-only | markdown/specs exist but `change-explainer.html` is missing/stale | direct decision-review HTML companion |
@@ -180,7 +285,9 @@ If unclear, ask one short clarifying question.
 ### 3. Discovery before drafting
 
 Run lightweight discovery unless the user explicitly requests a fast draft.
-Get to a usable mode quickly; do not interrogate the user with a long form.
+Get to a usable mode quickly; do not interrogate the user with a long form. A
+fast draft may compress discovery, but it does not skip the Value Challenge Gate
+unless the user explicitly selects `proceed_with_assumptions`.
 
 #### 3.1 Brain dump
 
@@ -235,7 +342,106 @@ Name the concerns present in the change. Examples:
 
 Use these concerns to decide which proposal/design/spec sections need depth.
 
-### 4. Build the Spec Kernel
+### 4. Frame value and alternatives
+
+Before writing OpenSpec files, translate the request into a value frame:
+
+```text
+User/beneficiary: <who benefits or is protected>
+Problem or opportunity: <current pain, risk, inefficiency, mandate, or upside>
+Why now: <trigger, urgency, or reason not to defer>
+Success signal: <observable improvement or prevented failure>
+Cost/risk shape: <implementation, governance, operational, migration, or review cost>
+No-build candidate: <existing behavior/process/docs/config/manual path, or none>
+Smaller-scope candidate: <minimal useful slice, or none>
+Assumptions: <what is inferred rather than known>
+```
+
+Value-frame rules:
+
+- If no beneficiary or success signal can be named, challenge before scaffolding.
+- If the request names only an implementation mechanism, ask what user/system
+  outcome the mechanism is meant to produce.
+- If a no-build or smaller-scope option plausibly achieves the success signal,
+  present it instead of defaulting to a full package.
+- If value depends on missing evidence, either ask for it or use
+  `proceed_with_assumptions` with explicit risk.
+
+### 5. Value Challenge Gate
+
+Do not scaffold an OpenSpec change until this gate has one of the outcomes
+below. This is the prompt-level checkpoint that prevents the skill from acting as
+an order-taker.
+
+Gate questions:
+
+- Is the desired outcome clear enough to review?
+- Is the user/system benefit or risk reduction credible?
+- Is there an observable success signal?
+- Is a governed build/spec change more appropriate than no-build, measurement,
+  documentation, configuration, or process change?
+- Is the requested scope the smallest useful scope?
+- Are material risks, boundaries, and validation needs knowable enough to draft?
+
+Gate outcomes:
+
+- **Proceed to spec**: value, scope, and success are clear enough; continue to
+  Spec Kernel and scaffolding.
+- **No-build**: do not scaffold; report the no-build recommendation and the
+  evidence/trigger that would reopen the decision.
+- **Smaller-scope**: narrow the change before naming/scaffolding; preserve
+  deferred work as non-goals or `[BACKLOG]` only when useful.
+- **Ask before drafting**: ask one concise blocking question when a human
+  decision is required for value, safety, or scope.
+- **`proceed_with_assumptions`**: continue only with explicit assumptions,
+  open questions, and review/verification steps that can retire uncertainty.
+
+Challenge triggers:
+
+- no clear beneficiary, failure mode, or success signal;
+- request appears to optimize internal preference without user/system value;
+- existing behavior, configuration, docs, process, or manual operation likely
+  solves the need;
+- scope combines unrelated capabilities or speculative future work;
+- proposed implementation conflicts with authoritative specs or module
+  boundaries;
+- high-stakes API, data, security, compliance, production, or architecture
+  decisions are ambiguous;
+- estimated governance/implementation cost appears larger than the validated
+  value.
+
+When a trigger is present, use the constructive disagreement protocol. If the
+user chooses to continue despite the challenge, capture the rationale and risks
+in `proposal.md` and/or `design.md`.
+
+### 6. Pre-spec quality rubric
+
+Run this rubric before selecting names or scaffolding. It is intentionally
+lighter than the final quality rubric, but failure should change the path to
+no-build, smaller-scope, a clarifying question, or `proceed_with_assumptions`.
+
+| Criterion | Pass signal | If weak |
+| --- | --- | --- |
+| Value clarity | beneficiary, problem, and why-now are stated | challenge or ask for context |
+| Success signal | outcome can be tested, demoed, inspected, or measured | define signal or tag assumption |
+| Evidence/source grounding | claims come from user input, source docs, code, incidents, or explicit assumptions | ask/read more or mark `[ASSUMPTION]` |
+| Scope discipline | smallest useful capability is identified; non-goals are visible | propose smaller-scope |
+| No-build considered | lower-cost non-build options were checked | recommend no-build or explain why not |
+| Boundary/risk awareness | ownership, API/data/security/ops risks are known enough for stakes | ask, reduce scope, or record open question |
+| Spec readiness | requirements can be stated as WHAT, not merely HOW | reframe outcome before drafting |
+| Verification path | there is at least one plausible validation route | add validation assumption or pause |
+
+Minimum pre-spec bar:
+
+- For low-stakes internal changes, unresolved items may proceed only as tagged
+  assumptions.
+- For high-stakes or irreversible changes, unresolved value/safety/boundary
+  questions block scaffolding unless the user explicitly accepts
+  `proceed_with_assumptions`.
+- Do not create a full OpenSpec package just to legitimize an idea that the gate
+  says should be no-build.
+
+### 7. Build the Spec Kernel
 
 Before writing OpenSpec files, distill the request into this kernel. Keep it in
 working notes or include it explicitly in `design.md` when useful.
@@ -261,7 +467,7 @@ Kernel rules:
 - Preserve stable terms. If a domain noun appears, define it once in design or
   the spec and reuse it consistently.
 
-### 5. Pick the change name and capability name
+### 8. Pick the change name and capability name
 
 Change name rules:
 
@@ -277,7 +483,7 @@ Capability/spec name rules:
 - create a new capability only when no existing spec owns the behavior;
 - for module-internal behavior, include the owning module prefix when required.
 
-### 6. Scaffold the OpenSpec change
+### 9. Scaffold the OpenSpec change
 
 Use the bundled skill helper first:
 
@@ -294,10 +500,11 @@ Do not depend on any external scaffold tool being present. If a project
 explicitly requires stricter local policy checks, run them only as additional
 evidence after this bundled scaffold/write path.
 
-### 7. Write `proposal.md`
+### 10. Write `proposal.md`
 
-`proposal.md` explains **why this change exists** and **what scope review is
-approving**. Keep it concise and decision-oriented.
+`proposal.md` explains **why this change exists**, **what scope review is
+approving**, and **why the value gate allowed this package to proceed**. Keep it
+concise and decision-oriented.
 
 Template:
 
@@ -308,6 +515,13 @@ Template:
 
 <Problem, user need, risk, opportunity, mandate, or architectural pressure.
 Explain the current failure mode and why it matters now.>
+
+## Value Gate
+
+- Outcome: `<proceed_to_spec | smaller_scope | proceed_with_assumptions>`
+- No-build considered: <why no-build was rejected, or why the user overrode it>
+- Smaller-scope considered: <selected minimal scope, or why broader scope is justified>
+- Assumption posture: <confirmed, `[ASSUMPTION]`-tagged, or requires review>
 
 ## What Changes
 
@@ -344,10 +558,12 @@ Explain the current failure mode and why it matters now.>
 Rules:
 
 - Do not hide risky scope in vague wording.
+- Preserve the Value Challenge Gate outcome and any no-build/smaller-scope
+  reasoning that affected scope.
 - Include non-goals when there is any chance of scope creep.
 - If the user request is ambiguous, ask before writing irreversible scope.
 
-### 8. Write `design.md`
+### 11. Write `design.md`
 
 `design.md` records the technical direction, trade-offs, and concern scan. It
 should be sufficient for another agent/developer to implement without
@@ -365,6 +581,7 @@ Template:
 ## Spec Kernel
 
 - Why: <why>
+- Value gate outcome: <proceed_to_spec, smaller_scope, or proceed_with_assumptions>
 - Capabilities:
   - <capability intent + success>
 - Constraints:
@@ -390,6 +607,18 @@ Template:
 | <concern> | <why it matters> | <how the design handles it> |
 
 ## Decisions
+
+### D0. Value path
+
+**Choice**
+<Proceed to spec, smaller-scope, or proceed_with_assumptions.>
+
+**Rationale**
+<Why this path is better than no-build or broader/narrower alternatives.>
+
+**Alternatives considered**
+- No-build: <why rejected/deferred or why user overrode it>
+- Smaller/larger scope: <why selected/deferred>
 
 ### D1. <Decision title>
 
@@ -445,7 +674,7 @@ Rules:
 - Include rollback/migration when behavior, data, deployment, or public contract
   changes.
 
-### 9. Write `tasks.md`
+### 12. Write `tasks.md`
 
 `tasks.md` is the implementation checklist. It should be actionable and
 verifiable.
@@ -490,7 +719,7 @@ Rules:
 - Use `[BACKLOG]` only for explicit non-blocking follow-ups.
 - Unchecked non-backlog tasks are archive blockers.
 
-### 10. Write `specs/<capability>/spec.md`
+### 13. Write `specs/<capability>/spec.md`
 
 Spec deltas describe required behavior. Use RFC 2119 style (`SHALL`, `MUST`,
 `MAY`, `SHOULD`) and scenario blocks.
@@ -530,7 +759,7 @@ Quality rules:
 - Preserve terminology consistently. If the same concept appears under multiple
   names, choose one term and mention the alias only once if necessary.
 
-### 11. Optional structured elicitation pass
+### 14. Optional structured elicitation pass
 
 For high-stakes or ambiguous sections, offer an elicitation menu after drafting a
 section. Apply the chosen lens, show the improvement, and ask whether to apply
@@ -566,7 +795,7 @@ Rules:
   question instead of inventing an answer.
 - Return to the main workflow after the user accepts, rejects, or skips.
 
-### 12. Load-bearing preservation pass
+### 15. Load-bearing preservation pass
 
 Before validation, walk the source material claim by claim.
 
@@ -585,7 +814,7 @@ Wrapper-only content, rhetoric, duplicate prose, and process metadata can be
 dropped, but record important drops in `design.md` preservation notes when the
 choice may be questioned later.
 
-### 13. Refresh `source-manifest.json`
+### 16. Refresh `source-manifest.json`
 
 After writing markdown/spec files, refresh and validate the manifest with the
 bundled helper:
@@ -599,7 +828,7 @@ Never skip the manifest gate solely because the target workspace lacks
 `openspec/scripts/*`. If a project explicitly requires stricter local policy
 checks, run them only as additional evidence after the bundled manifest gate.
 
-### 14. Generate `change-explainer.html`
+### 17. Generate `change-explainer.html`
 
 For create and update modes, generate `change-explainer.html` directly from
 OpenSpec sources. It is part of the standard OpenSpec change package and is not
@@ -722,7 +951,7 @@ Guardrails:
 - If a section cannot be grounded in source files, mark it not applicable or
   source-unspecified rather than inventing content.
 
-### 15. Quality validation rubric
+### 18. Quality validation rubric
 
 Run this rubric before handing off. Fix issues when the source supports a fix;
 otherwise record assumptions/open questions.
@@ -769,7 +998,7 @@ otherwise record assumptions/open questions.
 - Dropped content was non-load-bearing or recorded as intentionally omitted.
 - Existing authoritative specs were extended, not contradicted.
 
-### 16. Archive-readiness check
+### 19. Archive-readiness check
 
 Only run archive preflight as readiness evidence. Do not archive unless the user
 explicitly asks to close/archive.
@@ -799,16 +1028,20 @@ When done, report:
 - change path;
 - files created/updated;
 - capability/spec name(s);
+- Value Challenge Gate outcome, including no-build, smaller-scope, or `proceed_with_assumptions` rationale when applicable;
 - validations run and results;
 - skipped validations and why;
 - assumptions and open questions;
 - quality-rubric verdict;
-- recommended next step: review, implement, revise, or archive readiness.
+- recommended next step: no-build action, revise scope, review, implement, or archive readiness.
 
 ## Hard guardrails
 
 - Do not convert the change into `/goal` or Goal DAG output from this skill.
 - Do not invent requirements absent from user input or source evidence.
+- Do not scaffold an OpenSpec package before the Value Challenge Gate passes,
+  yields a smaller-scope target, or records an explicit `proceed_with_assumptions`
+  path.
 - Do not hide ambiguity; ask a clarifying question or put it in Open Questions.
 - Do not create implementation tasks that contradict module boundaries.
 - Do not create docs in retired paths such as `docs/superpowers/`.
