@@ -66,16 +66,39 @@ Expected output is an OpenSpec change under:
 openspec/changes/<change-name>/
 ```
 
+## Value-gated workflow helper (new)
+
+`agent-goal-writer` now uses a pre-spec value gate before starting OpenSpec
+writing. Use `scripts/agent-goal-writer-workflow` to make this check explicit,
+recordable, and reviewable.
+
+Use this helper when:
+
+- The user goal is new/unclear or hard to prove as valuable.
+- You need to compare `no-build` and `smaller-scope` alternatives before
+  choosing scope.
+- You need an auditable decision surface before `proposal.md`/`design.md`/
+  `tasks.md` scaffolding.
+- You must decide whether to continue with acknowledged assumptions.
+
+For simple “validation-only” or “explainer-only” modes, you can skip these helper
+`init/gate/write-spec` steps and run the OpenSpec validation wrappers directly.
+
 ## Bundled helpers
 
 Run these from the skill directory, or resolve them relative to `SKILL.md` when
 the skill is installed by Pi:
 
 ```bash
+# Start or refresh local value-gated workflow state
 scripts/agent-goal-writer-workflow init --project-root <target-root> --change-name <change-name> --capability <capability> --goal "<goal>"
 scripts/agent-goal-writer-workflow check --project-root <target-root>
 scripts/agent-goal-writer-workflow gate --pre-spec --project-root <target-root>
 scripts/agent-goal-writer-workflow write-spec --project-root <target-root>
+# optional acknowledgement path when value clarity is partial
+scripts/agent-goal-writer-workflow gate --pre-spec --acknowledge-assumptions --acknowledgement "<why proceed despite open risks>" --project-root <target-root>
+
+# Existing OpenSpec helpers
 scripts/openspec-propose <change-name> --project-root <target-root> --capability <capability>
 scripts/openspec-build-source-manifest <change-name> --project-root <target-root>
 scripts/openspec-validate-source-manifest <change-name> --project-root <target-root>
@@ -83,11 +106,12 @@ scripts/openspec-validate-explainer <change-name> --project-root <target-root> -
 scripts/openspec-archive-preflight <change-name> --project-root <target-root> --require-decision-review
 ```
 
-The workflow helper creates `.writer-workflow/` artifacts and emits JSON status
-for `blocked`, `pass`, and `proceed_with_assumptions`. Exit codes are stable:
+The workflow helper creates `.writer-workflow/` artifacts and emits JSON status for
+`blocked`, `pass`, and `proceed_with_assumptions`. Exit codes are stable:
 `0` pass, `20` blocked, `30` acknowledgement required, `40` invalid artifact,
 `50` write failed, and `64` usage error. `proceed_with_assumptions` requires an
-explicit acknowledgement before `gate --pre-spec` or `write-spec` can proceed.
+explicit acknowledgement before `gate --pre-spec` or `write-spec` can return
+success.
 
 Compatibility wrapper:
 

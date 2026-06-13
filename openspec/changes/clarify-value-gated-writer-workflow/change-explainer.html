@@ -1,0 +1,236 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="openspec-explainer-mode" content="decision-review">
+  <title>clarify-value-gated-writer-workflow 決策審查</title>
+  <style>
+    :root { color-scheme: light; --bg:#f7f7fb; --card:#ffffff; --ink:#1f2937; --muted:#6b7280; --line:#d9deea; --accent:#4f46e5; --warn:#b45309; --danger:#b91c1c; --ok:#047857; }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: var(--bg); color: var(--ink); line-height: 1.6; overflow-wrap: anywhere; }
+    header { padding: 2rem clamp(1rem, 4vw, 4rem); background: linear-gradient(135deg, #312e81, #4f46e5); color: white; }
+    header p { max-width: 70rem; }
+    nav { position: sticky; top: 0; z-index: 3; display: flex; gap: .5rem; flex-wrap: wrap; padding: .75rem clamp(1rem, 4vw, 4rem); background: rgba(255,255,255,.95); border-bottom: 1px solid var(--line); }
+    nav a { color: var(--accent); text-decoration: none; padding: .35rem .55rem; border-radius: .6rem; }
+    nav a:hover { background: #eef2ff; }
+    main { width: min(1180px, 100%); margin: 0 auto; padding: 1.25rem; }
+    section { margin: 1rem 0; padding: 1.25rem; background: var(--card); border: 1px solid var(--line); border-radius: 1rem; box-shadow: 0 8px 22px rgba(31,41,55,.05); }
+    h1, h2, h3 { line-height: 1.25; }
+    h2 { margin-top: 0; }
+    .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; }
+    .three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .card { padding: 1rem; border: 1px solid var(--line); border-radius: .85rem; background: #fbfdff; }
+    .muted { color: var(--muted); }
+    .pill { display: inline-block; padding: .2rem .55rem; border-radius: 999px; font-size: .85rem; background: #eef2ff; color: #3730a3; }
+    .risk[data-risk="high"] { border-color: #fecaca; background: #fff7f7; }
+    .risk[data-risk="medium"] { border-color: #fed7aa; background: #fffaf0; }
+    button { cursor: pointer; border: 1px solid var(--line); background: white; border-radius: .6rem; padding: .45rem .7rem; }
+    button:hover { border-color: var(--accent); color: var(--accent); }
+    pre { max-width: 100%; overflow: auto; white-space: pre-wrap; word-break: break-word; padding: 1rem; border-radius: .8rem; background: #111827; color: #e5e7eb; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { padding: .65rem; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
+    svg { width: 100%; height: auto; border: 1px solid var(--line); border-radius: .8rem; background: #fff; }
+    @media (max-width: 760px) { main { padding: .75rem; } section { padding: .9rem; } .grid, .three { grid-template-columns: minmax(0, 1fr); } .card { min-width: 0; } nav { position: static; } table { display:block; overflow:auto; } }
+  </style>
+</head>
+<body>
+  <header>
+    <p class="pill">OpenSpec decision-review explainer</p>
+    <h1>clarify-value-gated-writer-workflow</h1>
+    <p>此 change 將 agent-goal-writer 明確定義為「會挑戰價值的規格夥伴」：先與使用者釐清與辯論，再經過 pre-spec 品質閘門，最後才寫 OpenSpec。</p>
+  </header>
+
+  <nav role="navigation" aria-label="主要導覽">
+    <a href="#why">Why</a>
+    <a href="#what-changes">What Changes</a>
+    <a href="#before-after">Before/After</a>
+    <a href="#flow">Flow</a>
+    <a href="#decision-points">決策點</a>
+    <a href="#implementation-slices">實作切片</a>
+    <a href="#verification-plan">驗證</a>
+    <a href="#risk-register">風險</a>
+    <a href="#agent-prompts">Agent prompts</a>
+  </nav>
+
+  <main>
+    <section id="why">
+      <h2>為什麼要做</h2>
+      <p>目前 skill 已經說明 discovery、spec kernel、OpenSpec 寫作與驗證，但仍可能被理解為「使用者說什麼就產生規格」。這會讓模糊或價值不足的目標被包裝成看似成熟的 proposal/design/tasks/spec。</p>
+      <p>此 change 的核心價值是：在寫 spec 前，讓 writer 先挑戰目標是否值得做、成功訊號是否可驗證、是否有 no-build 或更小範圍的替代方案。</p>
+      <button class="copy-button" data-copy="#decision-summary">複製決策摘要</button>
+      <pre id="decision-summary">決策：在 agent-goal-writer 中加入 value-gated workflow。OpenSpec 寫作必須先通過 pre-spec gate，或在使用者明確承認風險後以 proceed_with_assumptions 前進。</pre>
+    </section>
+
+    <section id="what-changes">
+      <h2>變更內容</h2>
+      <div class="grid three">
+        <div class="card"><h3>Critical collaborator</h3><p>writer 不再只是 order-taker；必須能提出建設性反對與替代方案。</p></div>
+        <div class="card"><h3>Value Challenge Gate</h3><p>在 spec kernel 前檢查問題、受影響者、價值證據、不做的代價、no-build、smaller-scope。</p></div>
+        <div class="card"><h3>Workflow script</h3><p>新增 helper contract，建立 .writer-workflow artifacts 並在寫 OpenSpec 前執行品質閘門。</p></div>
+      </div>
+    </section>
+
+    <section id="before-after">
+      <h2>變更前 / 變更後</h2>
+      <div class="grid">
+        <div class="card">
+          <h3>變更前 Before</h3>
+          <ul>
+            <li>模糊需求可能太快被轉成 OpenSpec。</li>
+            <li>價值挑戰存在於 prompt 風格，但不是明確 gate。</li>
+            <li>沒有 workflow artifact 可供審查 pre-spec 品質。</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>變更後 After</h3>
+          <ul>
+            <li>writer 必須先釐清問題與挑戰價值。</li>
+            <li>pre-spec gate 產生 blocked/pass/proceed_with_assumptions。</li>
+            <li>proposal/design 必須保留價值辯論、替代方案、假設與風險。</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <section id="flow">
+      <h2>流程視覺</h2>
+      <svg viewBox="0 0 980 230" role="img" aria-label="value gated workflow">
+        <defs><marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L0,6 L9,3 z" fill="#4f46e5"/></marker></defs>
+        <g font-family="system-ui" font-size="15" text-anchor="middle">
+          <rect x="20" y="70" width="115" height="70" rx="14" fill="#eef2ff" stroke="#4f46e5"/><text x="77" y="100">INTAKE</text><text x="77" y="122" font-size="12">原始目標</text>
+          <rect x="160" y="70" width="150" height="70" rx="14" fill="#fff7ed" stroke="#b45309"/><text x="235" y="98">VALUE</text><text x="235" y="120">CHALLENGE</text>
+          <rect x="335" y="70" width="135" height="70" rx="14" fill="#f0fdf4" stroke="#047857"/><text x="402" y="100">CLARIFY</text><text x="402" y="122" font-size="12">邊界與成功</text>
+          <rect x="495" y="70" width="135" height="70" rx="14" fill="#ecfeff" stroke="#0891b2"/><text x="562" y="100">SPEC</text><text x="562" y="122">KERNEL</text>
+          <rect x="655" y="58" width="145" height="94" rx="14" fill="#fef2f2" stroke="#b91c1c"/><text x="727" y="94">PRE-SPEC</text><text x="727" y="118">QUALITY GATE</text>
+          <rect x="825" y="70" width="135" height="70" rx="14" fill="#f5f3ff" stroke="#7c3aed"/><text x="892" y="100">OPENSPEC</text><text x="892" y="122">WRITE</text>
+        </g>
+        <g stroke="#4f46e5" stroke-width="3" marker-end="url(#arrow)"><line x1="135" y1="105" x2="155" y2="105"/><line x1="310" y1="105" x2="330" y2="105"/><line x1="470" y1="105" x2="490" y2="105"/><line x1="630" y1="105" x2="650" y2="105"/><line x1="800" y1="105" x2="820" y2="105"/></g>
+        <text x="727" y="185" text-anchor="middle" font-size="14" fill="#b91c1c">blocked 時回到 clarification；pass 或 acknowledged assumptions 才能寫 spec</text>
+      </svg>
+    </section>
+
+    <section id="affected-surfaces">
+      <h2>受影響面</h2>
+      <table>
+        <thead><tr><th>Surface</th><th>Impact</th></tr></thead>
+        <tbody>
+          <tr><td>SKILL.md</td><td>新增 critical collaborator、value challenge、pre-spec gate workflow 說明。</td></tr>
+          <tr><td>scripts/</td><td>新增 agent-goal-writer-workflow helper；既有 openspec-* helpers 不被替換。</td></tr>
+          <tr><td>.writer-workflow/ artifacts</td><td>新增本地 pre-writing evidence：intake、value challenge、clarification、spec kernel、review report。</td></tr>
+          <tr><td>OpenSpec package</td><td>proposal/design/tasks/spec 必須保留價值辯論與假設。</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="scope-boundaries">
+      <h2>範圍邊界</h2>
+      <div class="grid">
+        <div class="card"><h3>包含</h3><p>workflow stages、pre-spec gate、constructive disagreement、proceed_with_assumptions、artifact templates、script command contract。</p></div>
+        <div class="card"><h3>不包含</h3><p>不轉換為 /goal DAG、不讓 script 自行判斷產品價值、不取代 manifest/explainer/archive helpers、不自動 archive。</p></div>
+      </div>
+    </section>
+
+    <section id="decision-points">
+      <h2>決策點 Decision Points</h2>
+      <div class="card" data-decision="stage-machine">
+        <h3>決策 1：使用 state-machine workflow</h3>
+        <p><strong>推薦：</strong>採用 INTAKE → VALUE_CHALLENGE → CLARIFICATION → SPEC_KERNEL → PRE_SPEC_QUALITY_GATE → OPENSPEC_WRITE → VALIDATION。</p>
+        <p><strong>取捨：</strong>比純 prompt 多一些 artifacts，但可審查、可重跑、可阻擋 premature spec。</p>
+        <p><strong>信心：</strong>高。此設計直接回應「每個階段穩定運行」的需求。</p>
+      </div>
+      <div class="card" data-decision="gate-status">
+        <h3>決策 2：使用 blocked/pass/proceed_with_assumptions</h3>
+        <p><strong>推薦：</strong>允許帶假設前進，但必須明確記錄使用者承認的風險。</p>
+        <p><strong>取捨：</strong>避免無限阻擋，也避免把未驗證風險偽裝成事實。</p>
+        <p><strong>信心：</strong>中高。需透過測試防止此狀態被濫用。</p>
+      </div>
+    </section>
+
+    <section id="implementation-slices">
+      <h2>Implementation slices 實作切片</h2>
+      <div class="grid three">
+        <div class="card"><h3>Slice 1：Skill contract</h3><p>更新 SKILL.md 的目的、workflow、品質 gate 與 guardrails。驗收：文件明確禁止過早寫 spec。</p></div>
+        <div class="card"><h3>Slice 2：Workflow script</h3><p>新增 init/check/gate/write-spec CLI。驗收：blocked gate 時 write-spec 失敗。</p></div>
+        <div class="card"><h3>Slice 3：Tests/docs</h3><p>加入 fixture tests 與 README 用法。驗收：pass、blocked、proceed_with_assumptions 都有覆蓋。</p></div>
+      </div>
+    </section>
+
+    <section id="verification-plan">
+      <h2>Verification plan 驗證計畫</h2>
+      <ul>
+        <li>Incomplete artifacts 應讓 pre-spec gate 回傳 blocked 與 non-zero exit。</li>
+        <li>完整 spec kernel 應讓 gate 回傳 pass。</li>
+        <li>未承認風險時不得回傳 proceed_with_assumptions。</li>
+        <li>write-spec 在 gate pass 前必須失敗。</li>
+        <li>完成 OpenSpec 後仍需刷新 source-manifest 並驗證 explainer。</li>
+      </ul>
+    </section>
+
+    <section id="risk-register">
+      <h2>Risk register 風險清單</h2>
+      <p><button data-filter="high-risk">高風險篩選 high-risk filter</button> <button data-filter="all">顯示全部</button></p>
+      <div class="grid">
+        <div class="card risk" data-risk="medium"><h3>辯論變成阻礙</h3><p>緩解：要求 constructive disagreement、fast path、可接受 assumptions。</p></div>
+        <div class="card risk" data-risk="medium"><h3>script 造成假信心</h3><p>緩解：清楚分離 deterministic checks 與 agent judgment。</p></div>
+        <div class="card risk" data-risk="high"><h3>直接繞過 workflow</h3><p>緩解：SKILL.md 將 pre-spec gate 定為 create/update normal path 的必要步驟。</p></div>
+        <div class="card risk" data-risk="medium"><h3>proceed_with_assumptions 被濫用</h3><p>緩解：必須有使用者明確承認，並寫入 proposal/design。</p></div>
+      </div>
+    </section>
+
+    <section id="rollout">
+      <h2>Rollout / rollback</h2>
+      <p>先新增 helper 與文件規範，不移除既有 openspec-propose、manifest、explainer、archive scripts。若 workflow 造成過度摩擦，可回退為只在高風險或模糊 change 強制 gate，但此 change 的推薦方向是 normal create/update path 都需 gate。</p>
+    </section>
+
+    <section id="current-status">
+      <h2>Current status</h2>
+      <p>狀態：draft change package。此 explainer 反映 proposal/design/tasks/spec 的內容；權威來源仍是 Markdown 與 spec delta。</p>
+    </section>
+
+    <section id="agent-prompts">
+      <h2>Copyable agent prompts</h2>
+      <div class="grid three">
+        <div class="card"><h3>Implementation agent prompt 實作代理提示</h3><button data-copy="#impl-prompt">複製</button><pre id="impl-prompt">Implement clarify-value-gated-writer-workflow. Update SKILL.md, add scripts/agent-goal-writer-workflow, create workflow artifacts, enforce pre-spec gate before OpenSpec writing, and add tests for blocked/pass/proceed_with_assumptions.</pre></div>
+        <div class="card"><h3>Review agent prompt 審查代理提示</h3><button data-copy="#review-prompt">複製</button><pre id="review-prompt">Review whether the change prevents premature OpenSpec writing, preserves value challenge outputs, and keeps script checks separate from agent judgment. Verify no existing helper contract is broken.</pre></div>
+        <div class="card"><h3>Verification agent prompt 驗證代理提示</h3><button data-copy="#verify-prompt">複製</button><pre id="verify-prompt">Run workflow script fixtures for init/check/gate/write-spec. Confirm blocked cases fail, pass cases proceed, proceed_with_assumptions requires user acknowledgement, and manifest/explainer validation still run.</pre></div>
+      </div>
+    </section>
+
+    <section id="task-json-export">
+      <h2>Task JSON export 任務 JSON</h2>
+      <p><button data-copy="#task-json">複製任務 JSON</button></p>
+      <script type="application/json" id="task-json">
+      {
+        "change": "clarify-value-gated-writer-workflow",
+        "slices": [
+          {"id":"skill-contract", "acceptance":"SKILL.md requires value challenge before spec writing"},
+          {"id":"workflow-script", "acceptance":"write-spec fails unless pre-spec gate pass/proceed_with_assumptions"},
+          {"id":"tests-docs", "acceptance":"blocked/pass/proceed_with_assumptions fixtures pass"}
+        ]
+      }
+      </script>
+    </section>
+  </main>
+
+  <script>
+    document.querySelectorAll('[data-copy]').forEach((button) => {
+      button.addEventListener('click', async () => {
+        const target = document.querySelector(button.getAttribute('data-copy'));
+        const text = target ? target.textContent.trim() : '';
+        if (navigator.clipboard) await navigator.clipboard.writeText(text);
+        button.textContent = '已複製';
+        setTimeout(() => button.textContent = button.textContent.includes('JSON') ? '複製任務 JSON' : '複製', 900);
+      });
+    });
+    document.querySelectorAll('[data-filter]').forEach((button) => {
+      button.addEventListener('click', () => {
+        const mode = button.getAttribute('data-filter');
+        document.querySelectorAll('.risk').forEach((card) => {
+          card.style.display = (mode === 'all' || card.getAttribute('data-risk') === 'high') ? '' : 'none';
+        });
+      });
+    });
+  </script>
+</body>
+</html>

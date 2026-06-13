@@ -1,0 +1,167 @@
+{
+  "version": 1,
+  "objective": "Implement the value-gated agent-goal-writer workflow so ambiguous goals are challenged, clarified, pre-spec gated, and only then written as OpenSpec.",
+  "defaults": {
+    "completionGates": [
+      "controller-validation"
+    ]
+  },
+  "modelRouting": {
+    "scenarios": {
+      "spark-implementation": {
+        "model": "openai-codex/gpt-5.3-codex-spark",
+        "description": "Catalog default for isolated low/medium implementation tasks within 128k context"
+      },
+      "implementation": {
+        "model": "deepseek/deepseek-v4-pro",
+        "description": "Catalog implementation scenario for medium-risk refactor, integration, and test-suite work"
+      },
+      "spark-docs": {
+        "model": "openai-codex/gpt-5.3-codex-spark",
+        "description": "Catalog low-risk docs/spec/markdown scenario within 128k context"
+      },
+      "review": {
+        "model": "deepseek/deepseek-v4-pro",
+        "description": "Catalog review/audit/spec-validation scenario for medium/high risk validation"
+      },
+      "final-authority": {
+        "model": "openai-codex/gpt-5.5",
+        "description": "Catalog final-authority scenario for architecture-level decisions and final authority work"
+      }
+    },
+    "controllerScenario": "final-authority",
+    "defaultSubagentScenario": "spark-implementation"
+  },
+  "nodes": [
+    {
+      "id": "skill-contract",
+      "objective": "Update SKILL.md to define agent-goal-writer as a critical collaborator rather than an order-taker, add the value-gated workflow stages before OpenSpec scaffolding, document the Value Challenge Gate, constructive disagreement protocol, no-build option, smaller-scope option, proceed_with_assumptions path, and pre-spec quality rubric.",
+      "outputs": [
+        "SKILL.md"
+      ],
+      "conflicts": {
+        "files": [
+          "SKILL.md"
+        ],
+        "modules": [
+          "agent-goal-writer"
+        ],
+        "capabilities": [
+          "agent-goal-writer-workflow"
+        ]
+      },
+      "scope": "skill contract and prompt-level workflow",
+      "workspace": {
+        "worktreeSlug": "skill-contract"
+      },
+      "risk": "medium",
+      "modelScenario": "final-authority"
+    },
+    {
+      "id": "workflow-helper",
+      "objective": "Add scripts/agent-goal-writer-workflow using only standard-library automation or a thin wrapper around it. Implement init, check, gate --pre-spec, and write-spec; create .writer-workflow artifacts; enforce blocked/pass/proceed_with_assumptions statuses; require explicit acknowledgement for proceed_with_assumptions; and return stable non-zero exit codes plus machine-readable status output.",
+      "outputs": [
+        "scripts/agent-goal-writer-workflow"
+      ],
+      "conflicts": {
+        "files": [
+          "scripts/agent-goal-writer-workflow"
+        ],
+        "modules": [
+          "scripts"
+        ],
+        "capabilities": [
+          "agent-goal-writer-workflow"
+        ]
+      },
+      "scope": "workflow helper CLI and local artifact templates",
+      "workspace": {
+        "worktreeSlug": "workflow-helper"
+      },
+      "risk": "high",
+      "modelScenario": "implementation"
+    },
+    {
+      "id": "workflow-tests",
+      "objective": "Add script-level tests or fixture-driven checks for the workflow helper covering init artifact creation, blocked gates for missing success signal/no-build/non-goal/unresolved blocker questions, pass status for a complete spec kernel, proceed_with_assumptions failure without acknowledgement and success with acknowledgement, and write-spec failure before the gate passes. Run the repository's relevant deterministic validation if one is established by the implementation.",
+      "after": [
+        "workflow-helper"
+      ],
+      "conflicts": {
+        "modules": [
+          "scripts",
+          "tests"
+        ],
+        "capabilities": [
+          "agent-goal-writer-workflow"
+        ]
+      },
+      "scope": "workflow helper verification coverage",
+      "workspace": {
+        "worktreeSlug": "workflow-tests"
+      },
+      "risk": "medium",
+      "modelScenario": "implementation"
+    },
+    {
+      "id": "docs-closeout",
+      "objective": "Update README.md to describe the new value-gated workflow helper and when to use it, then refresh source-manifest.json and update change-explainer.html if required by the changed OpenSpec sources.",
+      "after": [
+        "skill-contract",
+        "workflow-helper",
+        "workflow-tests"
+      ],
+      "outputs": [
+        "README.md",
+        "openspec/changes/clarify-value-gated-writer-workflow/source-manifest.json",
+        "openspec/changes/clarify-value-gated-writer-workflow/change-explainer.html"
+      ],
+      "validators": [
+        "scripts/openspec-validate-source-manifest clarify-value-gated-writer-workflow --project-root .",
+        "scripts/openspec-validate-explainer clarify-value-gated-writer-workflow --project-root . --require-decision-review"
+      ],
+      "conflicts": {
+        "files": [
+          "README.md",
+          "openspec/changes/clarify-value-gated-writer-workflow/source-manifest.json",
+          "openspec/changes/clarify-value-gated-writer-workflow/change-explainer.html"
+        ],
+        "modules": [
+          "docs",
+          "openspec"
+        ],
+        "capabilities": [
+          "agent-goal-writer-workflow"
+        ]
+      },
+      "scope": "documentation and OpenSpec closeout",
+      "workspace": {
+        "worktreeSlug": "docs-closeout"
+      },
+      "risk": "low",
+      "modelScenario": "spark-docs"
+    },
+    {
+      "id": "final-validation",
+      "objective": "Perform final validation of the implemented value-gated writer workflow against the OpenSpec change: confirm SKILL.md, script behavior, tests, README, source manifest, and decision-review explainer preserve the critical-collaborator, value challenge, pre-spec gate, and proceed_with_assumptions requirements. Do not archive unless explicitly instructed separately.",
+      "after": [
+        "docs-closeout"
+      ],
+      "validators": [
+        "scripts/openspec-validate-source-manifest clarify-value-gated-writer-workflow --project-root .",
+        "scripts/openspec-validate-explainer clarify-value-gated-writer-workflow --project-root . --require-decision-review"
+      ],
+      "conflicts": {
+        "capabilities": [
+          "agent-goal-writer-workflow"
+        ]
+      },
+      "scope": "final audit and validation",
+      "workspace": {
+        "worktreeSlug": "final-validation"
+      },
+      "risk": "medium",
+      "modelScenario": "review"
+    }
+  ]
+}
