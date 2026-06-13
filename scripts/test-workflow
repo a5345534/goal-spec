@@ -1,0 +1,966 @@
+#!/usr/bin/env bash
+# Test runner for agent-goal-writer-workflow
+#
+# Covers:
+#   - init artifact creation
+#   - blocked gates for missing success signal / no-build / non-goal /
+#     unresolved blocker questions
+#   - pass status for a complete spec kernel
+#   - proceed_with_assumptions failure without acknowledgement
+#   - proceed_with_assumptions success with acknowledgement
+#   - write-spec failure before the gate passes
+#   - write-spec success after gate passes
+#
+# Deterministic validation: every check/gate/write-spec command emits stable
+# JSON exit codes. This runner verifies both exit codes and key fields in the
+# output payload.
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+WORKFLOW="$SCRIPT_DIR/agent-goal-writer-workflow"
+
+PASS=0
+FAIL=0
+SKIP=0
+TOTAL=0
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[0;33m'
+NC='\033[0m' # No Color
+
+# --- helpers ---
+
+run_test() {
+    local name="$1"
+    shift
+    TOTAL=$((TOTAL + 1))
+    printf "  %-68s " "$name"
+    if "$@"; then
+        PASS=$((PASS + 1))
+        printf "${GREEN}PASS${NC}\n"
+    else
+        FAIL=$((FAIL + 1))
+        printf "${RED}FAIL${NC}\n"
+    fi
+}
+
+assert_exit() {
+    local expected="$1"
+    local actual="$2"
+    local label="$3"
+    if [[ "$actual" -ne "$expected" ]]; then
+        printf "\n    ${RED}%s: expected exit %d, got %d${NC}\n" "$label" "$expected" "$actual"
+        return 1
+    fi
+    return 0
+}
+
+assert_json_field() {
+    local json="$1"
+    local field="$2"
+    local expected="$3"
+    local label="$4"
+    local actual
+    actual=$(echo "$json" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('$field',''))")
+    if [[ "$actual" != "$expected" ]]; then
+        printf "\n    ${RED}%s: expected '%s', got '%s'${NC}\n" "$label" "$expected" "$actual"
+        return 1
+    fi
+    return 0
+}
+
+assert_json_path() {
+    local json="$1"
+    local path="$2"
+    local expected="$3"
+    local label="$4"
+    local actual
+    actual=$(echo "$json" | python3 -c "import json,sys; d=json.load(sys.stdin); parts='$path'.split('.'); v=d; [v:=v.get(p,None) for p in parts]; print(v if v is not None else '')")
+    if [[ "$actual" != "$expected" ]]; then
+        printf "\n    ${RED}%s: expected '%s', got '%s'${NC}\n" "$label" "$expected" "$actual"
+        return 1
+    fi
+    return 0
+}
+
+# Create a minimal filled value-gate.json (status=pass) using python.
+# All REQUIRED_PRE_SPEC_FIELDS populated.
+filled_gate_pass() {
+    local dir="$1"
+    local change_name="${2:-test-change}"
+    local capability="${3:-test-capability}"
+    python3 -c "
+import json, sys
+from datetime import datetime, timezone
+now = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace('+00:00','Z')
+gate = {
+    'schemaVersion': '1.0',
+    'status': 'pass',
+    'changeName': '$change_name',
+    'capability': '$capability',
+    'goal': 'Validate the workflow helper produces correct gate outcomes across blocked, pass, proceed_with_assumptions, and write-spec paths.',
+    'createdAt': now,
+    'updatedAt': now,
+    'valueFrame': {
+        'beneficiary': 'developers using agent-goal-writer',
+        'problemOrOpportunity': 'The workflow helper needs deterministic test coverage.',
+        'whyNow': 'Tests are required before the gate can be trusted in production.',
+        'successSignal': 'All test scenarios pass with expected exit codes and JSON outputs.',
+        'costRiskShape': 'Low — script-level tests with fixtures.',
+        'noBuildCandidate': 'Manual spot-checking; rejected because it does not scale.',
+        'smallerScopeCandidate': 'Test only exit codes; rejected because JSON output validation is also needed.',
+        'scopeSummary': 'A bash test runner covering init, check, gate, and write-spec paths.',
+        'verificationPath': 'Run scripts/test-workflow and observe no failures.',
+    },
+    'decision': {
+        'rationale': 'The value gate must produce correct, consistent exit codes for agent-driven workflows.',
+        'noBuildConsidered': 'Considered skipping tests; tests provide the primary deterministic validation.',
+        'smallerScopeConsidered': 'Considered testing only check; extending to write-spec caught gate ordering bugs.',
+    },
+    'constraints': ['Only Python stdlib and bash; no pip/npm deps.'],
+    'nonGoals': ['End-to-end OpenSpec validation (covered by other scripts).'],
+    'assumptions': ['[ASSUMPTION] The workflow helper exit codes are stable.'],
+    'risks': [],
+    'openQuestions': [],
+    'blockers': [],
+    'acknowledgement': {
+        'requiredFor': 'proceed_with_assumptions',
+        'accepted': False,
+        'acceptedAt': '',
+        'acceptedBy': '',
+        'rationale': '',
+    },
+}
+print(json.dumps(gate))
+"
+}
+
+filled_gate_blocked() {
+    local dir="$1"
+    python3 -c "
+import json
+from datetime import datetime, timezone
+now = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace('+00:00','Z')
+gate = {
+    'schemaVersion': '1.0',
+    'status': 'blocked',
+    'changeName': 'test-blocked',
+    'capability': 'test-cap',
+    'goal': 'Test blocked flow.',
+    'createdAt': now,
+    'updatedAt': now,
+    'valueFrame': {
+        'beneficiary': '',
+        'problemOrOpportunity': '',
+        'whyNow': '',
+        'successSignal': '',
+        'costRiskShape': '',
+        'noBuildCandidate': '',
+        'smallerScopeCandidate': '',
+        'scopeSummary': '',
+        'verificationPath': '',
+    },
+    'decision': {
+        'rationale': '',
+        'noBuildConsidered': '',
+        'smallerScopeConsidered': '',
+    },
+    'constraints': [],
+    'nonGoals': [],
+    'assumptions': [],
+    'risks': [],
+    'openQuestions': ['Unresolved architecture question'],
+    'blockers': ['Missing key value-frame fields'],
+    'acknowledgement': {
+        'requiredFor': 'proceed_with_assumptions',
+        'accepted': False,
+        'acceptedAt': '',
+        'acceptedBy': '',
+        'rationale': '',
+    },
+}
+print(json.dumps(gate))
+"
+}
+
+filled_gate_proceed() {
+    local dir="$1"
+    local change_name="${2:-test-proceed}"
+    local capability="${3:-test-cap}"
+    python3 -c "
+import json
+from datetime import datetime, timezone
+now = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace('+00:00','Z')
+gate = {
+    'schemaVersion': '1.0',
+    'status': 'proceed_with_assumptions',
+    'changeName': '$change_name',
+    'capability': '$capability',
+    'goal': 'Test proceed_with_assumptions flow.',
+    'createdAt': now,
+    'updatedAt': now,
+    'valueFrame': {
+        'beneficiary': 'devs',
+        'problemOrOpportunity': 'Need to test proceed_with_assumptions.',
+        'whyNow': 'To verify the acknowledgement gate.',
+        'successSignal': 'Ack flow works.',
+        'costRiskShape': 'Low.',
+        'noBuildCandidate': 'None.',
+        'smallerScopeCandidate': 'None.',
+        'scopeSummary': 'Test ack flow.',
+        'verificationPath': 'Run tests.',
+    },
+    'decision': {
+        'rationale': 'Testing is needed.',
+        'noBuildConsidered': 'Considered.',
+        'smallerScopeConsidered': 'Considered.',
+    },
+    'constraints': [],
+    'nonGoals': [],
+    'assumptions': ['[ASSUMPTION] External API is stable.'],
+    'risks': [],
+    'openQuestions': [],
+    'blockers': [],
+    'acknowledgement': {
+        'requiredFor': 'proceed_with_assumptions',
+        'accepted': False,
+        'acceptedAt': '',
+        'acceptedBy': '',
+        'rationale': '',
+    },
+}
+print(json.dumps(gate))
+"
+}
+
+# Gapped value gate: missing successSignal (placeholder)
+gapped_success_signal() {
+    local dir="$1"
+    python3 -c "
+import json
+from datetime import datetime, timezone
+now = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace('+00:00','Z')
+gate = {
+    'schemaVersion': '1.0',
+    'status': 'pass',
+    'changeName': 'test-gap-ss',
+    'capability': 'test-cap',
+    'goal': 'Test missing success signal.',
+    'createdAt': now,
+    'updatedAt': now,
+    'valueFrame': {
+        'beneficiary': 'devs',
+        'problemOrOpportunity': 'Something.',
+        'whyNow': 'Now.',
+        'successSignal': 'TODO',
+        'costRiskShape': 'Low.',
+        'noBuildCandidate': '',
+        'smallerScopeCandidate': '',
+        'scopeSummary': 'Test.',
+        'verificationPath': 'Test.',
+    },
+    'decision': {
+        'rationale': 'Need test.',
+        'noBuildConsidered': 'Considered.',
+        'smallerScopeConsidered': 'Considered.',
+    },
+    'constraints': [],
+    'nonGoals': [],
+    'assumptions': [],
+    'risks': [],
+    'openQuestions': [],
+    'blockers': [],
+    'acknowledgement': {
+        'requiredFor': 'proceed_with_assumptions',
+        'accepted': False,
+        'acceptedAt': '',
+        'acceptedBy': '',
+        'rationale': '',
+    },
+}
+print(json.dumps(gate))
+"
+}
+
+# Gapped value gate: missing noBuildConsidered (placeholder)
+gapped_no_build() {
+    local dir="$1"
+    python3 -c "
+import json
+from datetime import datetime, timezone
+now = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace('+00:00','Z')
+gate = {
+    'schemaVersion': '1.0',
+    'status': 'pass',
+    'changeName': 'test-gap-nb',
+    'capability': 'test-cap',
+    'goal': 'Test missing no-build.',
+    'createdAt': now,
+    'updatedAt': now,
+    'valueFrame': {
+        'beneficiary': 'devs',
+        'problemOrOpportunity': 'Something.',
+        'whyNow': 'Now.',
+        'successSignal': 'Signal.',
+        'costRiskShape': 'Low.',
+        'noBuildCandidate': '',
+        'smallerScopeCandidate': '',
+        'scopeSummary': 'Test.',
+        'verificationPath': 'Test.',
+    },
+    'decision': {
+        'rationale': 'Need test.',
+        'noBuildConsidered': 'TBD',
+        'smallerScopeConsidered': 'Considered.',
+    },
+    'constraints': [],
+    'nonGoals': [],
+    'assumptions': [],
+    'risks': [],
+    'openQuestions': [],
+    'blockers': [],
+    'acknowledgement': {
+        'requiredFor': 'proceed_with_assumptions',
+        'accepted': False,
+        'acceptedAt': '',
+        'acceptedBy': '',
+        'rationale': '',
+    },
+}
+print(json.dumps(gate))
+"
+}
+
+# Gapped value gate: missing goal (placeholder)
+gapped_non_goal() {
+    local dir="$1"
+    python3 -c "
+import json
+from datetime import datetime, timezone
+now = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace('+00:00','Z')
+gate = {
+    'schemaVersion': '1.0',
+    'status': 'pass',
+    'changeName': 'test-gap-goal',
+    'capability': 'test-cap',
+    'goal': 'FILL ME',
+    'createdAt': now,
+    'updatedAt': now,
+    'valueFrame': {
+        'beneficiary': 'devs',
+        'problemOrOpportunity': 'Something.',
+        'whyNow': 'Now.',
+        'successSignal': 'Signal.',
+        'costRiskShape': 'Low.',
+        'noBuildCandidate': '',
+        'smallerScopeCandidate': '',
+        'scopeSummary': 'Test.',
+        'verificationPath': 'Test.',
+    },
+    'decision': {
+        'rationale': 'Need test.',
+        'noBuildConsidered': 'Considered.',
+        'smallerScopeConsidered': 'Considered.',
+    },
+    'constraints': [],
+    'nonGoals': [],
+    'assumptions': [],
+    'risks': [],
+    'openQuestions': [],
+    'blockers': [],
+    'acknowledgement': {
+        'requiredFor': 'proceed_with_assumptions',
+        'accepted': False,
+        'acceptedAt': '',
+        'acceptedBy': '',
+        'rationale': '',
+    },
+}
+print(json.dumps(gate))
+"
+}
+
+# Gapped value gate: missing rationale (another pre-spec field)
+gapped_rationale() {
+    local dir="$1"
+    python3 -c "
+import json
+from datetime import datetime, timezone
+now = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace('+00:00','Z')
+gate = {
+    'schemaVersion': '1.0',
+    'status': 'pass',
+    'changeName': 'test-gap-rat',
+    'capability': 'test-cap',
+    'goal': 'Test missing rationale.',
+    'createdAt': now,
+    'updatedAt': now,
+    'valueFrame': {
+        'beneficiary': 'devs',
+        'problemOrOpportunity': 'Something.',
+        'whyNow': 'Now.',
+        'successSignal': 'Signal.',
+        'costRiskShape': 'Low.',
+        'noBuildCandidate': '',
+        'smallerScopeCandidate': '',
+        'scopeSummary': 'Test.',
+        'verificationPath': 'Test.',
+    },
+    'decision': {
+        'rationale': '',
+        'noBuildConsidered': 'Considered.',
+        'smallerScopeConsidered': 'Considered.',
+    },
+    'constraints': [],
+    'nonGoals': [],
+    'assumptions': [],
+    'risks': [],
+    'openQuestions': [],
+    'blockers': [],
+    'acknowledgement': {
+        'requiredFor': 'proceed_with_assumptions',
+        'accepted': False,
+        'acceptedAt': '',
+        'acceptedBy': '',
+        'rationale': '',
+    },
+}
+print(json.dumps(gate))
+"
+}
+
+# --- test functions (each returns 0 on success, 1 on failure) ---
+
+test_init_creates_artifacts() {
+    local tmp
+    tmp=$(mktemp -d)
+    local out rc
+    set +e
+    out=$("$WORKFLOW" init --project-root "$tmp" --change-name "init-test" --capability "test-cap" --goal "Init test." 2>&1)
+    rc=$?
+    set -e
+    local ok=0
+    assert_exit 0 "$rc" "init exit" || ok=1
+    assert_json_field "$out" "status" "blocked" "status" || ok=1
+    assert_json_field "$out" "result" "initialized" "result" || ok=1
+
+    [[ -f "$tmp/.writer-workflow/value-gate.json" ]] || { printf "\n    ${RED}missing value-gate.json${NC}\n"; ok=1; }
+    [[ -f "$tmp/.writer-workflow/spec-kernel.md" ]] || { printf "\n    ${RED}missing spec-kernel.md${NC}\n"; ok=1; }
+    [[ -f "$tmp/.writer-workflow/README.md" ]] || { printf "\n    ${RED}missing README.md${NC}\n"; ok=1; }
+    [[ -f "$tmp/.writer-workflow/status.json" ]] || { printf "\n    ${RED}missing status.json${NC}\n"; ok=1; }
+
+    # Validate value-gate.json schema
+    python3 -c "
+import json
+with open('$tmp/.writer-workflow/value-gate.json') as f:
+    d = json.load(f)
+assert d['schemaVersion'] == '1.0'
+assert d['status'] == 'blocked'
+assert d['changeName'] == 'init-test'
+assert d['capability'] == 'test-cap'
+assert d['goal'] == 'Init test.'
+assert 'valueFrame' in d
+assert 'decision' in d
+print('OK')
+" > /dev/null 2>&1 || { printf "\n    ${RED}value-gate.json schema invalid${NC}\n"; ok=1; }
+
+    rm -rf "$tmp"
+    return $ok
+}
+
+test_init_refuses_overwrite() {
+    local tmp
+    tmp=$(mktemp -d)
+    "$WORKFLOW" init --project-root "$tmp" --change-name "ow-test" > /dev/null 2>&1
+    local out rc
+    set +e
+    out=$("$WORKFLOW" init --project-root "$tmp" --change-name "ow-test" 2>&1)
+    rc=$?
+    set -e
+    local ok=0
+    assert_exit 40 "$rc" "init overwrite exit" || ok=1
+    assert_json_field "$out" "exitCodeName" "invalid_artifact" "exitCodeName" || ok=1
+    rm -rf "$tmp"
+    return $ok
+}
+
+test_init_force_overwrites() {
+    local tmp
+    tmp=$(mktemp -d)
+    "$WORKFLOW" init --project-root "$tmp" --change-name "force-old" > /dev/null 2>&1
+    local out rc
+    set +e
+    out=$("$WORKFLOW" init --project-root "$tmp" --change-name "force-new" --force 2>&1)
+    rc=$?
+    set -e
+    local ok=0
+    assert_exit 0 "$rc" "init force exit" || ok=1
+    # Verify changeName was updated
+    python3 -c "
+import json
+with open('$tmp/.writer-workflow/value-gate.json') as f:
+    d = json.load(f)
+assert d['changeName'] == 'force-new'
+print('OK')
+" > /dev/null 2>&1 || { printf "\n    ${RED}force did not update changeName${NC}\n"; ok=1; }
+    rm -rf "$tmp"
+    return $ok
+}
+
+test_init_invalid_change_name() {
+    local tmp
+    tmp=$(mktemp -d)
+    local out rc
+    set +e
+    out=$("$WORKFLOW" init --project-root "$tmp" --change-name "Bad Name!" 2>&1)
+    rc=$?
+    set -e
+    local ok=0
+    assert_exit 64 "$rc" "bad change-name exit" || ok=1
+    rm -rf "$tmp"
+    return $ok
+}
+
+test_check_missing_artifact() {
+    local tmp
+    tmp=$(mktemp -d)
+    local out rc
+    set +e
+    out=$("$WORKFLOW" check --project-root "$tmp" 2>&1)
+    rc=$?
+    set -e
+    local ok=0
+    assert_exit 40 "$rc" "missing artifact exit" || ok=1
+    assert_json_field "$out" "exitCodeName" "invalid_artifact" "exitCodeName" || ok=1
+    rm -rf "$tmp"
+    return $ok
+}
+
+test_check_blocked_default() {
+    local tmp
+    tmp=$(mktemp -d)
+    "$WORKFLOW" init --project-root "$tmp" > /dev/null 2>&1
+    local out rc
+    set +e
+    out=$("$WORKFLOW" check --project-root "$tmp" 2>&1)
+    rc=$?
+    set -e
+    local ok=0
+    assert_exit 20 "$rc" "blocked default exit" || ok=1
+    assert_json_field "$out" "exitCodeName" "blocked" "exitCodeName" || ok=1
+    assert_json_field "$out" "result" "blocked" "result" || ok=1
+    rm -rf "$tmp"
+    return $ok
+}
+
+test_check_blocked_missing_success_signal() {
+    local tmp
+    tmp=$(mktemp -d)
+    "$WORKFLOW" init --project-root "$tmp" > /dev/null 2>&1
+    gapped_success_signal "$tmp" > "$tmp/.writer-workflow/value-gate.json"
+    local out rc
+    set +e
+    out=$("$WORKFLOW" check --project-root "$tmp" 2>&1)
+    rc=$?
+    set -e
+    local ok=0
+    # Should be invalid_artifact (40) because status=pass but fields are placeholder
+    assert_exit 40 "$rc" "missing success signal exit" || ok=1
+    assert_json_field "$out" "exitCodeName" "invalid_artifact" "exitCodeName" || ok=1
+    # Verify the error references the missing field
+    echo "$out" | python3 -c "import json,sys; d=json.load(sys.stdin); assert any('successSignal' in e or 'success signal' in e.lower() for e in d.get('errors',[]))" > /dev/null 2>&1 \
+        || { printf "\n    ${RED}error does not mention missing success signal${NC}\n"; ok=1; }
+    rm -rf "$tmp"
+    return $ok
+}
+
+test_check_blocked_missing_no_build() {
+    local tmp
+    tmp=$(mktemp -d)
+    "$WORKFLOW" init --project-root "$tmp" > /dev/null 2>&1
+    gapped_no_build "$tmp" > "$tmp/.writer-workflow/value-gate.json"
+    local out rc
+    set +e
+    out=$("$WORKFLOW" check --project-root "$tmp" 2>&1)
+    rc=$?
+    set -e
+    local ok=0
+    assert_exit 40 "$rc" "missing noBuild exit" || ok=1
+    echo "$out" | python3 -c "import json,sys; d=json.load(sys.stdin); assert any('no-build' in e.lower() for e in d.get('errors',[]))" > /dev/null 2>&1 \
+        || { printf "\n    ${RED}error does not mention missing no-build consideration${NC}\n"; ok=1; }
+    rm -rf "$tmp"
+    return $ok
+}
+
+test_check_blocked_non_goal() {
+    local tmp
+    tmp=$(mktemp -d)
+    "$WORKFLOW" init --project-root "$tmp" > /dev/null 2>&1
+    gapped_non_goal "$tmp" > "$tmp/.writer-workflow/value-gate.json"
+    local out rc
+    set +e
+    out=$("$WORKFLOW" check --project-root "$tmp" 2>&1)
+    rc=$?
+    set -e
+    local ok=0
+    assert_exit 40 "$rc" "missing goal exit" || ok=1
+    echo "$out" | python3 -c "import json,sys; d=json.load(sys.stdin); assert any('goal' in e.lower() or 'user goal' in e.lower() for e in d.get('errors',[]))" > /dev/null 2>&1 \
+        || { printf "\n    ${RED}error does not mention missing goal${NC}\n"; ok=1; }
+    rm -rf "$tmp"
+    return $ok
+}
+
+test_check_blocked_missing_rationale() {
+    local tmp
+    tmp=$(mktemp -d)
+    "$WORKFLOW" init --project-root "$tmp" > /dev/null 2>&1
+    gapped_rationale "$tmp" > "$tmp/.writer-workflow/value-gate.json"
+    local out rc
+    set +e
+    out=$("$WORKFLOW" check --project-root "$tmp" 2>&1)
+    rc=$?
+    set -e
+    local ok=0
+    assert_exit 40 "$rc" "missing rationale exit" || ok=1
+    echo "$out" | python3 -c "import json,sys; d=json.load(sys.stdin); assert any('rationale' in e.lower() for e in d.get('errors',[]))" > /dev/null 2>&1 \
+        || { printf "\n    ${RED}error does not mention missing rationale${NC}\n"; ok=1; }
+    rm -rf "$tmp"
+    return $ok
+}
+
+test_check_blocked_unresolved_questions() {
+    local tmp
+    tmp=$(mktemp -d)
+    "$WORKFLOW" init --project-root "$tmp" > /dev/null 2>&1
+    filled_gate_blocked "$tmp" > "$tmp/.writer-workflow/value-gate.json"
+    local out rc
+    set +e
+    out=$("$WORKFLOW" check --project-root "$tmp" 2>&1)
+    rc=$?
+    set -e
+    local ok=0
+    assert_exit 20 "$rc" "blocked with questions exit" || ok=1
+    assert_json_field "$out" "exitCodeName" "blocked" "exitCodeName" || ok=1
+    # Verify blockers are in output
+    echo "$out" | python3 -c "import json,sys; d=json.load(sys.stdin); assert d['blockers'] != []" > /dev/null 2>&1 \
+        || { printf "\n    ${RED}blockers list is empty${NC}\n"; ok=1; }
+    rm -rf "$tmp"
+    return $ok
+}
+
+test_check_pass_complete() {
+    local tmp
+    tmp=$(mktemp -d)
+    "$WORKFLOW" init --project-root "$tmp" --change-name "complete-test" --capability "cap" --goal "Complete." > /dev/null 2>&1
+    filled_gate_pass "$tmp" > "$tmp/.writer-workflow/value-gate.json"
+    local out rc
+    set +e
+    out=$("$WORKFLOW" check --project-root "$tmp" 2>&1)
+    rc=$?
+    set -e
+    local ok=0
+    assert_exit 0 "$rc" "pass complete exit" || ok=1
+    assert_json_field "$out" "exitCodeName" "pass" "exitCodeName" || ok=1
+    assert_json_field "$out" "result" "pass" "result" || ok=1
+    assert_json_field "$out" "allowed" "True" "allowed" || ok=1
+    # checks should include pre_spec_artifact pass
+    echo "$out" | python3 -c "
+import json,sys
+d=json.load(sys.stdin)
+checks = d.get('checks',[])
+assert any(c['name']=='pre_spec_artifact' and c['status']=='pass' for c in checks)
+" > /dev/null 2>&1 || { printf "\n    ${RED}pre_spec_artifact check not passing${NC}\n"; ok=1; }
+    rm -rf "$tmp"
+    return $ok
+}
+
+test_check_proceed_no_ack() {
+    local tmp
+    tmp=$(mktemp -d)
+    "$WORKFLOW" init --project-root "$tmp" --change-name "proceed-test" --capability "cap" > /dev/null 2>&1
+    filled_gate_proceed "$tmp" > "$tmp/.writer-workflow/value-gate.json"
+    local out rc
+    set +e
+    out=$("$WORKFLOW" check --project-root "$tmp" 2>&1)
+    rc=$?
+    set -e
+    local ok=0
+    assert_exit 30 "$rc" "proceed no ack exit" || ok=1
+    assert_json_field "$out" "exitCodeName" "acknowledgement_required" "exitCodeName" || ok=1
+    assert_json_field "$out" "result" "acknowledgement_required" "result" || ok=1
+    assert_json_field "$out" "acknowledgementRequired" "True" "acknowledgementRequired" || ok=1
+    rm -rf "$tmp"
+    return $ok
+}
+
+test_gate_proceed_with_ack() {
+    local tmp
+    tmp=$(mktemp -d)
+    "$WORKFLOW" init --project-root "$tmp" --change-name "ack-test" --capability "cap" > /dev/null 2>&1
+    filled_gate_proceed "$tmp" > "$tmp/.writer-workflow/value-gate.json"
+    local out rc
+    set +e
+    out=$("$WORKFLOW" gate --pre-spec --project-root "$tmp" \
+        --acknowledge-assumptions --acknowledgement "Accepted for testing." 2>&1)
+    rc=$?
+    set -e
+    local ok=0
+    assert_exit 0 "$rc" "proceed with ack exit" || ok=1
+    assert_json_field "$out" "exitCodeName" "pass" "exitCodeName" || ok=1
+    assert_json_field "$out" "result" "pass" "result" || ok=1
+    # Verify the value-gate.json was updated with acknowledgement
+    python3 -c "
+import json
+with open('$tmp/.writer-workflow/value-gate.json') as f:
+    d = json.load(f)
+assert d['acknowledgement']['accepted'] == True
+assert d['acknowledgement']['rationale'] == 'Accepted for testing.'
+print('OK')
+" > /dev/null 2>&1 || { printf "\n    ${RED}acknowledgement not persisted${NC}\n"; ok=1; }
+    rm -rf "$tmp"
+    return $ok
+}
+
+test_gate_proceed_no_ack_flag() {
+    local tmp
+    tmp=$(mktemp -d)
+    "$WORKFLOW" init --project-root "$tmp" --change-name "no-ack-flag" --capability "cap" > /dev/null 2>&1
+    filled_gate_proceed "$tmp" > "$tmp/.writer-workflow/value-gate.json"
+    local out rc
+    set +e
+    out=$("$WORKFLOW" gate --pre-spec --project-root "$tmp" 2>&1)
+    rc=$?
+    set -e
+    local ok=0
+    assert_exit 30 "$rc" "gate proceed no ack flag exit" || ok=1
+    assert_json_field "$out" "exitCodeName" "acknowledgement_required" "exitCodeName" || ok=1
+    rm -rf "$tmp"
+    return $ok
+}
+
+test_gate_blocked() {
+    local tmp
+    tmp=$(mktemp -d)
+    "$WORKFLOW" init --project-root "$tmp" > /dev/null 2>&1
+    filled_gate_blocked "$tmp" > "$tmp/.writer-workflow/value-gate.json"
+    local out rc
+    set +e
+    out=$("$WORKFLOW" gate --pre-spec --project-root "$tmp" 2>&1)
+    rc=$?
+    set -e
+    local ok=0
+    assert_exit 20 "$rc" "gate blocked exit" || ok=1
+    assert_json_field "$out" "exitCodeName" "blocked" "exitCodeName" || ok=1
+    assert_json_field "$out" "result" "blocked" "result" || ok=1
+    # Verify pre-spec-gate.json was written
+    [[ -f "$tmp/.writer-workflow/pre-spec-gate.json" ]] || { printf "\n    ${RED}missing pre-spec-gate.json${NC}\n"; ok=1; }
+    rm -rf "$tmp"
+    return $ok
+}
+
+test_gate_pass() {
+    local tmp
+    tmp=$(mktemp -d)
+    "$WORKFLOW" init --project-root "$tmp" --change-name "gate-pass" --capability "cap" > /dev/null 2>&1
+    filled_gate_pass "$tmp" > "$tmp/.writer-workflow/value-gate.json"
+    local out rc
+    set +e
+    out=$("$WORKFLOW" gate --pre-spec --project-root "$tmp" 2>&1)
+    rc=$?
+    set -e
+    local ok=0
+    assert_exit 0 "$rc" "gate pass exit" || ok=1
+    assert_json_field "$out" "exitCodeName" "pass" "exitCodeName" || ok=1
+    assert_json_field "$out" "allowed" "True" "allowed" || ok=1
+    # Verify pre-spec-gate.json and status.json were written
+    [[ -f "$tmp/.writer-workflow/pre-spec-gate.json" ]] || { printf "\n    ${RED}missing pre-spec-gate.json${NC}\n"; ok=1; }
+    [[ -f "$tmp/.writer-workflow/status.json" ]] || { printf "\n    ${RED}missing status.json${NC}\n"; ok=1; }
+    rm -rf "$tmp"
+    return $ok
+}
+
+test_write_spec_before_gate() {
+    local tmp
+    tmp=$(mktemp -d)
+    "$WORKFLOW" init --project-root "$tmp" > /dev/null 2>&1
+    filled_gate_blocked "$tmp" > "$tmp/.writer-workflow/value-gate.json"
+    local out rc
+    set +e
+    out=$("$WORKFLOW" write-spec --project-root "$tmp" 2>&1)
+    rc=$?
+    set -e
+    local ok=0
+    assert_exit 20 "$rc" "write-spec before gate exit" || ok=1
+    assert_json_field "$out" "exitCodeName" "blocked" "exitCodeName" || ok=1
+    # Verify write-spec-status.json was written
+    [[ -f "$tmp/.writer-workflow/write-spec-status.json" ]] || { printf "\n    ${RED}missing write-spec-status.json${NC}\n"; ok=1; }
+    # Ensure no OpenSpec artifacts were written
+    [[ ! -d "$tmp/openspec" ]] || { printf "\n    ${RED}unexpected OpenSpec dir${NC}\n"; ok=1; }
+    rm -rf "$tmp"
+    return $ok
+}
+
+test_write_spec_before_gate_proceed_no_ack() {
+    local tmp
+    tmp=$(mktemp -d)
+    "$WORKFLOW" init --project-root "$tmp" --change-name "ws-no-ack" --capability "cap" > /dev/null 2>&1
+    filled_gate_proceed "$tmp" > "$tmp/.writer-workflow/value-gate.json"
+    local out rc
+    set +e
+    out=$("$WORKFLOW" write-spec --project-root "$tmp" 2>&1)
+    rc=$?
+    set -e
+    local ok=0
+    assert_exit 30 "$rc" "write-spec proceed no ack exit" || ok=1
+    assert_json_field "$out" "exitCodeName" "acknowledgement_required" "exitCodeName" || ok=1
+    [[ ! -d "$tmp/openspec" ]] || { printf "\n    ${RED}unexpected OpenSpec dir${NC}\n"; ok=1; }
+    rm -rf "$tmp"
+    return $ok
+}
+
+test_write_spec_after_pass() {
+    local tmp
+    tmp=$(mktemp -d)
+    "$WORKFLOW" init --project-root "$tmp" --change-name "ws-pass" --capability "ws-cap" > /dev/null 2>&1
+    filled_gate_pass "$tmp" "ws-pass" "ws-cap" > "$tmp/.writer-workflow/value-gate.json"
+    local out rc
+    set +e
+    out=$("$WORKFLOW" write-spec --project-root "$tmp" 2>&1)
+    rc=$?
+    set -e
+    local ok=0
+    assert_exit 0 "$rc" "write-spec after pass exit" || ok=1
+    assert_json_field "$out" "exitCodeName" "pass" "exitCodeName" || ok=1
+    assert_json_field "$out" "result" "written" "result" || ok=1
+    # Verify OpenSpec files were written
+    [[ -f "$tmp/openspec/changes/ws-pass/proposal.md" ]] || { printf "\n    ${RED}missing proposal.md${NC}\n"; ok=1; }
+    [[ -f "$tmp/openspec/changes/ws-pass/design.md" ]] || { printf "\n    ${RED}missing design.md${NC}\n"; ok=1; }
+    [[ -f "$tmp/openspec/changes/ws-pass/tasks.md" ]] || { printf "\n    ${RED}missing tasks.md${NC}\n"; ok=1; }
+    [[ -f "$tmp/openspec/changes/ws-pass/specs/ws-cap/spec.md" ]] || { printf "\n    ${RED}missing spec.md${NC}\n"; ok=1; }
+    [[ -f "$tmp/openspec/changes/ws-pass/source-manifest.json" ]] || { printf "\n    ${RED}missing source-manifest.json${NC}\n"; ok=1; }
+    [[ -f "$tmp/openspec/changes/ws-pass/.openspec.yaml" ]] || { printf "\n    ${RED}missing .openspec.yaml${NC}\n"; ok=1; }
+    # Verify proposal includes success signal from value gate
+    grep -q "All test scenarios pass" "$tmp/openspec/changes/ws-pass/proposal.md" \
+        || { printf "\n    ${RED}proposal.md missing success signal${NC}\n"; ok=1; }
+    rm -rf "$tmp"
+    return $ok
+}
+
+test_write_spec_proceed_with_ack() {
+    local tmp
+    tmp=$(mktemp -d)
+    "$WORKFLOW" init --project-root "$tmp" --change-name "ws-ack" --capability "ws-ack-cap" > /dev/null 2>&1
+    filled_gate_proceed "$tmp" "ws-ack" "ws-ack-cap" > "$tmp/.writer-workflow/value-gate.json"
+    local out rc
+    set +e
+    out=$("$WORKFLOW" write-spec --project-root "$tmp" \
+        --acknowledge-assumptions --acknowledgement "Proceed accepted for write-spec test." 2>&1)
+    rc=$?
+    set -e
+    local ok=0
+    assert_exit 0 "$rc" "write-spec proceed with ack exit" || ok=1
+    assert_json_field "$out" "result" "written" "result" || ok=1
+    # Verify proposal marks proceed_with_assumptions
+    grep -q "proceed_with_assumptions" "$tmp/openspec/changes/ws-ack/proposal.md" \
+        || { printf "\n    ${RED}proposal does not reflect proceed_with_assumptions${NC}\n"; ok=1; }
+    rm -rf "$tmp"
+    return $ok
+}
+
+test_gate_missing_pre_spec_flag() {
+    local tmp
+    tmp=$(mktemp -d)
+    local out rc
+    set +e
+    out=$("$WORKFLOW" gate --project-root "$tmp" 2>&1)
+    rc=$?
+    set -e
+    local ok=0
+    assert_exit 64 "$rc" "gate without --pre-spec exit" || ok=1
+    assert_json_field "$out" "result" "usage_error" "result" || ok=1
+    rm -rf "$tmp"
+    return $ok
+}
+
+test_ack_without_rationale() {
+    local tmp
+    tmp=$(mktemp -d)
+    "$WORKFLOW" init --project-root "$tmp" --change-name "bad-ack" --capability "cap" > /dev/null 2>&1
+    filled_gate_proceed "$tmp" > "$tmp/.writer-workflow/value-gate.json"
+    local out rc
+    set +e
+    out=$("$WORKFLOW" gate --pre-spec --project-root "$tmp" \
+        --acknowledge-assumptions --acknowledgement "" 2>&1)
+    rc=$?
+    set -e
+    local ok=0
+    assert_exit 64 "$rc" "ack without rationale exit" || ok=1
+    rm -rf "$tmp"
+    return $ok
+}
+
+# --- main ---
+
+echo ""
+echo "=============================================="
+echo " agent-goal-writer-workflow test suite"
+echo "=============================================="
+echo ""
+
+# Section: Init
+echo "--- init ---"
+run_test "creates artifacts"            test_init_creates_artifacts
+run_test "refuses overwrite"            test_init_refuses_overwrite
+run_test "force overwrites"             test_init_force_overwrites
+run_test "invalid change-name rejected" test_init_invalid_change_name
+echo ""
+
+# Section: Check
+echo "--- check ---"
+run_test "missing artifact (40)"                    test_check_missing_artifact
+run_test "blocked default (20)"                     test_check_blocked_default
+run_test "blocked: missing success signal (40)"     test_check_blocked_missing_success_signal
+run_test "blocked: missing noBuildConsidered (40)"  test_check_blocked_missing_no_build
+run_test "blocked: missing goal (40)"               test_check_blocked_non_goal
+run_test "blocked: missing rationale (40)"          test_check_blocked_missing_rationale
+run_test "blocked: unresolved questions (20)"       test_check_blocked_unresolved_questions
+run_test "pass: complete spec kernel (0)"           test_check_pass_complete
+run_test "proceed_with_assumptions: no ack (30)"    test_check_proceed_no_ack
+echo ""
+
+# Section: Gate
+echo "--- gate --pre-spec ---"
+run_test "missing --pre-spec (64)"          test_gate_missing_pre_spec_flag
+run_test "blocked status (20)"              test_gate_blocked
+run_test "pass status (0)"                  test_gate_pass
+run_test "proceed_with_assumptions: no ack flag (30)" test_gate_proceed_no_ack_flag
+run_test "proceed_with_assumptions: with ack (0)"     test_gate_proceed_with_ack
+run_test "acknowledgement without rationale (64)"     test_ack_without_rationale
+echo ""
+
+# Section: Write-spec
+echo "--- write-spec ---"
+run_test "fails before gate: blocked (20)"                      test_write_spec_before_gate
+run_test "fails before gate: proceed_with_assumptions no ack (30)" test_write_spec_before_gate_proceed_no_ack
+run_test "succeeds after pass gate (0)"                          test_write_spec_after_pass
+run_test "succeeds with proceed_with_assumptions + ack (0)"      test_write_spec_proceed_with_ack
+echo ""
+
+# --- summary ---
+echo "=============================================="
+printf " Results: ${GREEN}%d passed${NC}" "$PASS"
+if [[ "$FAIL" -gt 0 ]]; then
+    printf ", ${RED}%d failed${NC}" "$FAIL"
+fi
+if [[ "$SKIP" -gt 0 ]]; then
+    printf ", ${YELLOW}%d skipped${NC}" "$SKIP"
+fi
+printf " (total %d)\n" "$TOTAL"
+echo "=============================================="
+
+if [[ "$FAIL" -gt 0 ]]; then
+    exit 1
+fi
+exit 0
