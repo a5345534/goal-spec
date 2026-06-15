@@ -18,6 +18,7 @@
   "files": [
     "SKILL.md",
     "README.md",
+    "docs/pipeline-boundaries.md",
     "scripts/goal-spec-openspec.py",
     "scripts/goal-spec-workflow",
     "scripts/agent-goal-writer-openspec.py",

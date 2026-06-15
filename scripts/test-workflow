@@ -1060,6 +1060,22 @@ test_write_spec_after_pass() {
     # Verify proposal includes success signal from value gate
     grep -q "All test scenarios pass" "$tmp/openspec/changes/ws-pass/proposal.md" \
         || { printf "\n    ${RED}proposal.md missing success signal${NC}\n"; ok=1; }
+    grep -q "## Execution Handoff Notes" "$tmp/openspec/changes/ws-pass/design.md" \
+        || { printf "\n    ${RED}design.md missing Execution Handoff Notes${NC}\n"; ok=1; }
+    if find "$tmp/openspec/changes/ws-pass" -name "*.dag.json" -print -quit | grep -q .; then
+        printf "\n    ${RED}unexpected .dag.json generated${NC}\n"
+        ok=1
+    fi
+    python3 -c "
+import json
+from pathlib import Path
+manifest = json.load(open(Path('$tmp')/'openspec/changes/ws-pass/source-manifest.json'))
+paths = {source['path'] for source in manifest['sources']}
+required = {'proposal.md', 'design.md', 'tasks.md', 'specs/ws-cap/spec.md'}
+assert required <= paths, paths
+assert 'change-explainer.html' not in paths, paths
+assert not any(path.endswith('.dag.json') for path in paths), paths
+" > /dev/null 2>&1 || { printf "\n    ${RED}source-manifest authoritative source set invalid${NC}\n"; ok=1; }
     rm -rf "$tmp"
     return $ok
 }

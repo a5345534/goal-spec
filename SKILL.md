@@ -577,6 +577,12 @@ Explain the current failure mode and why it matters now.>
 - <Explicitly out-of-scope item>
 - <Explicitly out-of-scope item>
 
+## Pipeline Handoff Boundary
+
+- Stage 1 output: governed OpenSpec sources only.
+- Downstream consumer: `goal-dag` reads `source-manifest.json` plus the authoritative markdown/spec sources.
+- No Goal DAG JSON or execution runtime plan is produced by this package.
+
 ## Success Signal
 
 <Observable proof that the change achieved its goal.>
@@ -696,6 +702,32 @@ Template:
 - <integration/API validation>
 - <manual/E2E validation>
 
+## Execution Handoff Notes
+
+This section records execution-planning evidence for downstream tools. It is not a DAG and does not assign runtime scheduling.
+
+### Candidate Execution Slices
+
+- <slice name>: <source-grounded reason this can be implemented independently>
+
+### Ordering / Dependency Evidence
+
+- <dependent work> depends on <upstream work> because <source-grounded reason>
+- If no dependency is source-grounded, state that slices may be parallelized by downstream planning.
+
+### Validation Signals
+
+- <validator command or observable acceptance signal>
+- If no deterministic validator exists, record acceptance criteria or open question.
+
+### Open Questions Affecting Execution
+
+- [ ] <question that must become a downstream blocker, decision node, or human-confirmation gate>
+
+### Non-Goals for Execution
+
+- <things downstream execution must not implement>
+
 ## Load-Bearing Preservation Notes
 
 - <Source claim> → <where it landed>
@@ -708,6 +740,7 @@ Rules:
 - Make ownership and boundaries explicit.
 - Include rollback/migration when behavior, data, deployment, or public contract
   changes.
+- Keep `Execution Handoff Notes` limited to evidence for downstream planning; do not include DAG runtime fields, node definitions, model routing, workspace strategy, completion gates, or JSON DAG output.
 
 ### 12. Write `tasks.md`
 
@@ -723,6 +756,7 @@ Template:
 
 - [ ] 1.1 Update `<capability>` spec delta.
 - [ ] 1.2 Confirm affected APIs/events/data contracts.
+- [ ] 1.3 Fill or confirm `design.md` Execution Handoff Notes with source-grounded slices, dependency evidence, validation signals, execution-affecting open questions, and execution non-goals.
 
 ## 2. Implementation
 
@@ -741,6 +775,7 @@ Template:
 - [ ] 4.2 Refresh `source-manifest.json`.
 - [ ] 4.3 Validate `change-explainer.html` if required.
 - [ ] 4.4 Run archive preflight when implementation is complete.
+- [ ] 4.5 Confirm Stage 1 produced only OpenSpec package sources and did not generate downstream execution-plan artifacts.
 
 ## Backlog / Follow-ups
 
@@ -1073,6 +1108,9 @@ When done, report:
 ## Hard guardrails
 
 - Do not convert the change into `/goal` or Goal DAG output from this skill.
+- Do not produce `GoalDagSpec`, `.dag.json`, `.trace.json`, or `/goal` commands.
+- Do not decide node decomposition, model routing, worktree allocation, subagent scheduling, or runtime validation.
+- When preparing a change for downstream execution planning, make implementation-relevant claims explicit in proposal/design/tasks/specs, not only in `change-explainer.html`.
 - Do not invent requirements absent from user input or source evidence.
 - Do not scaffold an OpenSpec package before the Value Challenge Gate passes,
   yields a smaller-scope target, or records an explicit `proceed_with_assumptions`

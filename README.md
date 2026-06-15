@@ -38,6 +38,22 @@ The skill incorporates BMAD-style planning practices adapted for OpenSpec:
 This skill is **not** for converting OpenSpec into `/goal` or Goal DAG files.
 It is for writing the OpenSpec specification/change package itself.
 
+## Pipeline Role
+
+`goal-spec` is Stage 1 of the goal execution pipeline:
+
+```text
+user goal → OpenSpec change package
+```
+
+It writes governed OpenSpec sources only. It does not convert OpenSpec into Goal DAG files and does not invoke `/goal`.
+
+Downstream tools such as `goal-dag` must consume the OpenSpec change package through `source-manifest.json` and the listed authoritative sources.
+
+Authoritative sources are `proposal.md`, `design.md`, `tasks.md`, and `specs/**/spec.md`. `change-explainer.html`, `.goal-spec/` workflow state, and generated temporary context files are non-authoritative.
+
+See `docs/pipeline-boundaries.md` for the full Stage 1 boundary and handoff contract.
+
 ## Use with Pi
 
 Load directly:
