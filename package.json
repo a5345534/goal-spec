@@ -28,7 +28,8 @@
     "scripts/openspec-build-source-manifest",
     "scripts/openspec-propose",
     "scripts/openspec-validate-explainer",
-    "scripts/openspec-validate-source-manifest"
+    "scripts/openspec-validate-source-manifest",
+    "schemas/source-manifest.schema.json"
   ],
   "pi": {
     "skills": [
