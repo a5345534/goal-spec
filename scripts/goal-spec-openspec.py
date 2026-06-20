@@ -25,6 +25,102 @@ from pathlib import Path
 from typing import Any
 
 SCHEMA_VERSION = "1.0"
+
+# Quality profiles matching goal-contract GoalQualityProfile enum.
+# These are used for both source-signal detection and validation.
+VALID_QUALITY_PROFILES = frozenset([
+    "incremental-implementation",
+    "test-driven-change",
+    "code-review-required",
+    "api-boundary-review",
+    "frontend-runtime-review",
+    "security-sensitive-review",
+    "performance-sensitive-review",
+    "observability-required",
+    "docs-adr-required",
+    "ship-preflight",
+])
+
+# Required evidence tokens matching goal-contract validation.requiredEvidence enum.
+REQUIRED_EVIDENCE_OPTIONS = frozenset([
+    "validators-ran",
+    "locked-artifacts-unchanged",
+    "implementation-diff-present",
+    "non-test-diff-present",
+    "post-merge-validation-ran",
+    "audit-report-present",
+])
+
+# Keyword patterns for detecting quality signals from source text.
+# Mirrors the logic in goal-dag's openspec-quality-mapper.ts.
+QUALITY_SIGNAL_PATTERNS = {
+    "api_boundary": re.compile(
+        r"\b(api|endpoint|interface|contract|module boundary|public contract|"
+        r"compatibility|event|message|schema change|breaking change)\b",
+        re.IGNORECASE,
+    ),
+    "security_sensitive": re.compile(
+        r"\b(auth|authentication|authorization|secret|token|credential|password|"
+        r"user input|input validation|data access|privacy|pii|gdpr|permission|role|"
+        r"external integration|third.?party|oauth|jwt|session)\b",
+        re.IGNORECASE,
+    ),
+    "frontend_runtime": re.compile(
+        r"\b(frontend|browser|runtime|ui|component|client.?side|dom|react|vue|angular|"
+        r"css|style|layout|responsive|mobile|viewport)\b",
+        re.IGNORECASE,
+    ),
+    "performance_sensitive": re.compile(
+        r"\b(performance|latency|throughput|sla|benchmark|slow|bottleneck|cache|"
+        r"optimize|memory|load|concurrency)\b",
+        re.IGNORECASE,
+    ),
+    "production_visible": re.compile(
+        r"\b(production|deploy|release|launch|rollout|monitor|observe|alert|logging|"
+        r"metric|trace|diagnose)\b",
+        re.IGNORECASE,
+    ),
+    "docs_required": re.compile(
+        r"\b(architecture|adr|decision record|document|documentation|spec|api docs|"
+        r"design doc|readme)\b",
+        re.IGNORECASE,
+    ),
+    "ship_sensitive": re.compile(
+        r"\b(ship|release|launch|rollout|rollback|preflight|go.?live|canary|"
+        r"feature flag|toggle)\b",
+        re.IGNORECASE,
+    ),
+    "docs_only": re.compile(
+        r"\b(docs.?only|documentation.?only|no.?code|readme.?only|spec.?only|non.?code)\b",
+        re.IGNORECASE,
+    ),
+}
+
+# Pattern to extract explicit quality profiles from source text.
+# Matches "Quality profiles: incremental-implementation, test-driven-change"
+# and similar patterns.
+EXPLICIT_PROFILES_RE = re.compile(
+    r"(?:Quality profiles?|qualityProfiles?|quality.?profile)\s*[:：]\s*([^\n]+)",
+    re.IGNORECASE,
+)
+
+# Pattern to extract required evidence from source text.
+EXPLICIT_EVIDENCE_RE = re.compile(
+    r"(?:Required evidence|requiredEvidence)\s*[:：]\s*([^\n]+)",
+    re.IGNORECASE,
+)
+
+# Patterns to extract review posture and ship posture from the
+# Execution Quality Contract section.
+REVIEW_POSTURE_RE = re.compile(
+    r"(?:Review posture|reviewPosture)\s*[:：]\s*([^\n]+)",
+    re.IGNORECASE,
+)
+SHIP_POSTURE_RE = re.compile(
+    r"(?:Ship posture|shipPosture)\s*[:：]\s*([^\n]+)",
+    re.IGNORECASE,
+)
+
 SOURCE_CANDIDATES = (
     ("proposal.md", "proposal"),
     ("design.md", "design"),
@@ -274,13 +370,164 @@ def detect_sources(base: Path) -> list[dict[str, str]]:
     return sources
 
 
-def build_manifest(change_name: str, base: Path) -> dict[str, Any]:
+def detect_quality_signals(base: Path) -> dict[str, Any]:
+    """Parse quality signals from OpenSpec source files in a change directory.
+
+    Reads proposal.md, design.md, tasks.md, and spec deltas to extract quality
+    profiles, required evidence, review posture, and ship posture. Mirrors the
+    logic in goal-dag's openspec-quality-mapper.ts.
+    """
+    proposal_text = ""
+    design_text = ""
+    tasks_text = ""
+    spec_texts: list[str] = []
+
+    proposal_path = base / "proposal.md"
+    design_path = base / "design.md"
+    tasks_path = base / "tasks.md"
+    specs_dir = base / "specs"
+
+    if proposal_path.exists():
+        proposal_text = proposal_path.read_text(errors="replace")
+    if design_path.exists():
+        design_text = design_path.read_text(errors="replace")
+    if tasks_path.exists():
+        tasks_text = tasks_path.read_text(errors="replace")
+    if specs_dir.exists():
+        for spec_path in sorted(specs_dir.rglob("spec.md")):
+            spec_texts.append(spec_path.read_text(errors="replace"))
+
+    all_text = "\n".join([proposal_text, design_text, tasks_text] + spec_texts)
+
+    # 1. Extract explicit quality profiles from Execution Quality Contract
+    explicit_profiles: list[str] = []
+    for text_section in (proposal_text, design_text, tasks_text):
+        match = EXPLICIT_PROFILES_RE.search(text_section)
+        if match:
+            candidates = [
+                c.strip().strip("`")
+                for c in re.split(r"[,;，；]+", match.group(1))
+            ]
+            for candidate in candidates:
+                if candidate in VALID_QUALITY_PROFILES and candidate not in explicit_profiles:
+                    explicit_profiles.append(candidate)
+
+    # 2. Detect keyword-based signals
+    is_docs_only = bool(
+        QUALITY_SIGNAL_PATTERNS["docs_only"].search(proposal_text)
+        or QUALITY_SIGNAL_PATTERNS["docs_only"].search(design_text)
+    )
+
+    signals = {
+        "apiBoundary": bool(QUALITY_SIGNAL_PATTERNS["api_boundary"].search(all_text)),
+        "securitySensitive": bool(QUALITY_SIGNAL_PATTERNS["security_sensitive"].search(all_text)),
+        "frontendRuntime": bool(QUALITY_SIGNAL_PATTERNS["frontend_runtime"].search(all_text)),
+        "performanceSensitive": bool(QUALITY_SIGNAL_PATTERNS["performance_sensitive"].search(all_text)),
+        "productionVisible": bool(QUALITY_SIGNAL_PATTERNS["production_visible"].search(all_text)),
+        "docsRequired": bool(QUALITY_SIGNAL_PATTERNS["docs_required"].search(all_text)),
+        "shipSensitive": bool(QUALITY_SIGNAL_PATTERNS["ship_sensitive"].search(all_text)),
+        "isDocsOnly": is_docs_only,
+    }
+
+    # 3. Extract required evidence
+    required_evidence: list[str] = []
+    for text_section in (proposal_text, design_text):
+        match = EXPLICIT_EVIDENCE_RE.search(text_section)
+        if match:
+            candidates = [
+                c.strip().strip("`")
+                for c in re.split(r"[,;，；]+", match.group(1))
+            ]
+            for candidate in candidates:
+                if candidate in REQUIRED_EVIDENCE_OPTIONS and candidate not in required_evidence:
+                    required_evidence.append(candidate)
+
+    # 4. Extract review posture and ship posture
+    review_posture = ""
+    ship_posture = ""
+    # Look for Execution Quality Contract section in proposal
+    eqc_match = re.search(
+        r"## Execution Quality Contract\s*\n([\s\S]*?)(?=\n## |$)",
+        proposal_text,
+        re.IGNORECASE,
+    )
+    if eqc_match:
+        eqc_text = eqc_match.group(1)
+    else:
+        eqc_text = proposal_text
+    rm = REVIEW_POSTURE_RE.search(eqc_text)
+    if rm:
+        review_posture = rm.group(1).strip()
+    sm = SHIP_POSTURE_RE.search(eqc_text)
+    if sm:
+        ship_posture = sm.group(1).strip()
+
+    # 5. Resolve profiles from signals
+    resolved_profiles: list[str] = []
+    profile_grounding: dict[str, str] = {}
+
+    def _add(profile: str, reason: str) -> None:
+        if profile not in resolved_profiles:
+            resolved_profiles.append(profile)
+            profile_grounding[profile] = reason
+
+    # Explicit profiles always win
+    for profile in explicit_profiles:
+        _add(profile, f"Explicitly named in Execution Quality Contract")
+
+    # Implementation discipline (default for non-docs-only)
+    if not is_docs_only:
+        _add("incremental-implementation", "Implementation work requires incremental discipline")
+        _add("test-driven-change", "Behavior-changing work requires deterministic verification")
+        _add("code-review-required", "Implementation diff requires code review before final acceptance")
+
+    # Condition-based profiles
+    if signals["apiBoundary"]:
+        _add("api-boundary-review", "Change touches API, event, module boundary, or public contract surface")
+    if signals["securitySensitive"]:
+        _add("security-sensitive-review", "Change touches auth, secrets, user input, data access, or external integrations")
+    if signals["frontendRuntime"]:
+        _add("frontend-runtime-review", "Change affects frontend/browser/runtime behavior")
+    if signals["performanceSensitive"]:
+        _add("performance-sensitive-review", "Change is performance/SLA-sensitive")
+    if signals["productionVisible"]:
+        _add("observability-required", "Production-visible behavior must be observable and diagnosable")
+    if signals["docsRequired"]:
+        _add("docs-adr-required", "Architecture, API, or operational decision requires docs/ADR")
+    if signals["shipSensitive"]:
+        _add("ship-preflight", "Release-sensitive work requires launch, rollback, and monitor readiness check")
+
     return {
+        "explicitProfiles": explicit_profiles,
+        "resolvedProfiles": resolved_profiles,
+        "profileGrounding": profile_grounding,
+        "signals": signals,
+        "requiredEvidence": required_evidence,
+        "reviewPosture": review_posture,
+        "shipPosture": ship_posture,
+        "isDocsOnly": is_docs_only,
+        "hasQualityContract": bool(explicit_profiles or review_posture or ship_posture),
+    }
+
+
+def build_manifest(change_name: str, base: Path) -> dict[str, Any]:
+    quality_signals = detect_quality_signals(base)
+    manifest: dict[str, Any] = {
         "schemaVersion": SCHEMA_VERSION,
         "changeName": change_name,
         "generatedAt": dt.datetime.now(dt.timezone.utc).isoformat(),
         "sources": detect_sources(base),
     }
+    # Include quality profiles when detected
+    if quality_signals["resolvedProfiles"]:
+        manifest["qualityProfiles"] = quality_signals["resolvedProfiles"]
+    if quality_signals["requiredEvidence"]:
+        manifest["requiredEvidence"] = quality_signals["requiredEvidence"]
+    if quality_signals["reviewPosture"]:
+        manifest["reviewPosture"] = quality_signals["reviewPosture"]
+    if quality_signals["shipPosture"]:
+        manifest["shipPosture"] = quality_signals["shipPosture"]
+    return manifest
 
 
 def write_manifest(change_name: str, base: Path) -> Path:
@@ -321,7 +568,7 @@ def validate_manifest(change_name: str, base: Path) -> ValidationResult:
     if not isinstance(manifest, dict):
         errors.append("source-manifest root must be an object")
     else:
-        allowed = {"schemaVersion", "changeName", "generatedAt", "sources"}
+        allowed = {"schemaVersion", "changeName", "generatedAt", "sources", "qualityProfiles", "requiredEvidence", "reviewPosture", "shipPosture"}
         extra = sorted(set(manifest) - allowed)
         if extra:
             errors.append("unexpected source-manifest keys: " + ", ".join(extra))
@@ -651,6 +898,8 @@ def validate_decision_review_contract(text: str) -> ValidationResult:
         "verification_agent_prompt": _check_regex(text, r"verification[^<]{0,80}agent[^<]{0,80}prompt|驗證[^<]{0,80}agent[^<]{0,80}prompt|測試[^<]{0,80}agent[^<]{0,80}prompt"),
         "svg_visual": _check_regex(text, r"<svg\b"),
         "responsive_css": _check_regex(text, r"@media\b") and has_meta(text, "viewport"),
+        "quality_profiles_section": _check_regex(text, r"quality[-_ ]?profile|品質設定檔|品質配置|quality contract"),
+        "review_audit_posture": _check_regex(text, r"review posture|audit posture|preflight posture|審查姿態|稽核姿態"),
     }
     missing = [name for name, ok in checks.items() if not ok]
     data: dict[str, Any] = {"checks": checks}
@@ -716,8 +965,74 @@ def validate_explainer(
     }
     if decision_review is not None:
         data["decisionReview"] = decision_review.data
+
+    # Include quality profile analysis when source files exist
+    quality = detect_quality_signals(base)
+    if quality["resolvedProfiles"]:
+        data["qualityProfiles"] = {
+            "explicit": quality["explicitProfiles"],
+            "resolved": quality["resolvedProfiles"],
+            "grounding": quality["profileGrounding"],
+            "hasQualityContract": quality["hasQualityContract"],
+        }
+    if quality["requiredEvidence"]:
+        data["requiredEvidence"] = quality["requiredEvidence"]
+    if quality["reviewPosture"] or quality["shipPosture"]:
+        data["reviewAuditPosture"] = {
+            "reviewPosture": quality["reviewPosture"],
+            "shipPosture": quality["shipPosture"],
+        }
+
+    # For non-trivial changes, warn if no quality contract section exists in source
+    if not quality["isDocsOnly"] and not quality["hasQualityContract"] and not quality["explicitProfiles"]:
+        sorted_profiles = quality.get("resolvedProfiles", [])
+        if len(sorted_profiles) > 3:
+            data.setdefault("warnings", []).append(
+                "No explicit Execution Quality Contract found in proposal.md; "
+                "quality profiles were inferred from keyword analysis. "
+                "Consider adding '## Execution Quality Contract' to proposal.md "
+                "for source grounding."
+            )
+
     if missing_markers:
         data["missingMarkers"] = missing_markers
+    if errors:
+        data["errors"] = errors
+        return ValidationResult("fail", data)
+    return ValidationResult("ok", data)
+
+
+def validate_quality_profile(change_name: str, base: Path) -> ValidationResult:
+    """Validate that a change has a quality profile contract for non-trivial or
+    sensitive changes. Returns 'ok' when profiles are either explicitly stated
+    or can be resolved from source signals; returns 'fail' when a non-trivial
+    change lacks any quality profile indication."""
+    quality = detect_quality_signals(base)
+    data: dict[str, Any] = {
+        "changeName": change_name,
+        "changeDir": str(base),
+        "explicitProfiles": quality["explicitProfiles"],
+        "resolvedProfiles": quality["resolvedProfiles"],
+        "profileGrounding": quality["profileGrounding"],
+        "requiredEvidence": quality["requiredEvidence"],
+        "reviewPosture": quality["reviewPosture"],
+        "shipPosture": quality["shipPosture"],
+        "isDocsOnly": quality["isDocsOnly"],
+        "hasQualityContract": quality["hasQualityContract"],
+    }
+    errors: list[str] = []
+
+    if not quality["resolvedProfiles"] and not quality["isDocsOnly"]:
+        errors.append("no_quality_profiles_detected")
+
+    if not quality["explicitProfiles"] and not quality["isDocsOnly"]:
+        data["warnings"] = [
+            "No explicit quality profiles found in Execution Quality Contract. "
+            + "Profiles were resolved from keyword analysis if any were detected. "
+            + "Add 'Quality profiles: ...' to an Execution Quality Contract section "
+            + "in proposal.md for explicit source grounding."
+        ]
+
     if errors:
         data["errors"] = errors
         return ValidationResult("fail", data)
@@ -771,6 +1086,17 @@ Describe the problem, pressure, or opportunity that makes this change necessary.
 ## Non-Goals
 
 - TBD
+
+## Execution Quality Contract
+
+This section defines the quality posture and required evidence for this change.
+It is consumed by goal-dag's quality profile mapper and goal-runner's validation
+controller.
+
+- Quality profiles: `incremental-implementation`, `test-driven-change`, `code-review-required`
+- Required evidence: `validators-ran`, `locked-artifacts-unchanged`
+- Review posture: 
+- Ship posture: 
 
 ## Success Signal
 
@@ -848,6 +1174,16 @@ TBD
 
 TBD
 
+## Engineering Quality
+
+This section records source-grounded engineering quality decisions that supplement
+the Execution Quality Contract from proposal.md.
+
+- Quality profiles reiterated: 
+- Verification tooling: 
+- Performance/SLA targets: TBD
+- Observability requirements: TBD
+
 ## Risks
 
 | Risk | Severity | Mitigation |
@@ -869,6 +1205,7 @@ TASKS_TEMPLATE = """# Tasks: {change_name}
 
 - [ ] 1.1 Update `{capability}` spec delta.
 - [ ] 1.2 Confirm affected APIs/events/data contracts.
+- [ ] 1.3 Verify Execution Quality Contract and Engineering Quality sections are source-grounded in proposal.md and design.md.
 
 ## 2. Implementation
 
@@ -882,9 +1219,10 @@ TASKS_TEMPLATE = """# Tasks: {change_name}
 ## 4. Documentation / Closeout
 
 - [ ] 4.1 Update relevant docs if user-visible behavior, API contracts, deployment, module responsibility, or cross-module interaction changed.
-- [ ] 4.2 Refresh `source-manifest.json`.
+- [ ] 4.2 Refresh `source-manifest.json` (includes quality profiles from Execution Quality Contract).
 - [ ] 4.3 Validate `change-explainer.html` if required.
-- [ ] 4.4 Run archive preflight when implementation is complete.
+- [ ] 4.4 Run archive preflight when implementation is complete (includes quality profile check).
+- [ ] 4.5 Validate quality profiles with `scripts/goal-spec-openspec.py validate-quality-profile`.
 
 ## Backlog / Follow-ups
 
@@ -972,6 +1310,24 @@ def archive_preflight(change_name: str, base: Path, policy: Policy, *, require_d
         report["checks"]["explainer"] = {"status": explainer.status, **explainer.data}
         if explainer.status != "ok":
             report["errors"].append("invalid_change_explainer")
+
+    # Quality profile check: warn if non-trivial change lacks quality profiles
+    quality = detect_quality_signals(base)
+    if not quality["isDocsOnly"]:
+        report["checks"]["qualityProfile"] = {
+            "status": "ok" if quality["resolvedProfiles"] else "warn",
+            "explicitProfiles": quality["explicitProfiles"],
+            "resolvedProfiles": quality["resolvedProfiles"],
+            "hasQualityContract": quality["hasQualityContract"],
+        }
+        if not quality["resolvedProfiles"]:
+            report.setdefault("warnings", []).append(
+                "non-trivial change has no quality profiles; add Execution Quality Contract to proposal.md"
+            )
+        elif not quality["hasQualityContract"] and not quality["explicitProfiles"]:
+            report.setdefault("warnings", []).append(
+                "quality profiles were keyword-inferred; consider adding explicit Execution Quality Contract"
+            )
 
     report["status"] = "ok" if not report["errors"] else "fail"
     return report
@@ -1089,6 +1445,23 @@ def cmd_archive_preflight(args: argparse.Namespace) -> int:
     return 0 if payload.get("status") == "ok" else 1
 
 
+def cmd_validate_quality_profile(args: argparse.Namespace) -> int:
+    try:
+        root = _project_root(args.project_root)
+        policy = _policy(root, args.policy)
+        base = change_dir(policy, args.change_name)
+        if not base.exists():
+            raise FileNotFoundError(f"Change directory not found: {base}")
+        result = validate_quality_profile(args.change_name, base)
+        payload = {"status": result.status, **result.data}
+    except Exception as err:  # noqa: BLE001
+        payload = {"status": "fail", "error": str(err)}
+        _dump(payload, args.json)
+        return 1
+    _dump(payload, args.json)
+    return 0 if result.status == "ok" else 1
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Self-contained OpenSpec helpers bundled with goal-spec")
     parser.add_argument("--json", action="store_true", help="emit JSON output")
@@ -1125,6 +1498,10 @@ def build_parser() -> argparse.ArgumentParser:
     archive.add_argument("--require-decision-review", action="store_true", help="require strict decision-review affordances")
     archive.add_argument("--skip-browser-layout", action="store_true", help="skip Chrome/Chromium layout probe")
     archive.set_defaults(func=cmd_archive_preflight)
+
+    qp = subparsers.add_parser("validate-quality-profile", parents=[common], help="validate quality profile coverage for a change")
+    qp.add_argument("change_name")
+    qp.set_defaults(func=cmd_validate_quality_profile)
 
     return parser
 

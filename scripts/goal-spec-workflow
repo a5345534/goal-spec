@@ -160,6 +160,7 @@ EXTRACTORS: dict[str, tuple[str, ...]] = {
         "verificationPath",
     ),
     "decision": ("rationale", "noBuildConsidered", "smallerScopeConsidered"),
+    "quality": ("qualityProfiles", "requiredEvidence", "reviewPosture", "shipPosture"),
 }
 
 REFLECTORS: dict[str, str] = {
@@ -167,6 +168,7 @@ REFLECTORS: dict[str, str] = {
     "scope_discipline": "scope, non-goals, no-build, and smaller-scope must be visible",
     "verification": "success signal and verification path must be observable",
     "assumption_posture": "proceed_with_assumptions requires explicit acknowledgement",
+    "quality_posture": "non-trivial changes must have quality profiles and/or Execution Quality Contract in proposal.md",
 }
 
 RECOVERY_STRATEGIES: dict[str, str] = {
@@ -240,6 +242,10 @@ make sure they land in `proposal.md`, `design.md`, `tasks.md`, or the spec delta
 - Non-goals:
   - <explicitly out of scope>
 - Success signal: <observable proof the change worked>
+- Quality profiles: <e.g., incremental-implementation, test-driven-change, code-review-required>
+- Required evidence: <e.g., validators-ran, locked-artifacts-unchanged>
+- Review posture: <standard, elevated, or critical>
+- Ship posture: <standard, elevated, or critical>
 - Assumptions:
   - <[ASSUMPTION] inference or `None`>
 - Open questions:
@@ -511,6 +517,10 @@ def default_value_gate(change_name: str | None, capability: str | None, goal: st
             "noBuildConsidered": "",
             "smallerScopeConsidered": "",
         },
+        "qualityProfiles": [],
+        "requiredEvidence": [],
+        "reviewPosture": "",
+        "shipPosture": "",
         "constraints": [],
         "nonGoals": [],
         "assumptions": [],
@@ -593,8 +603,13 @@ def field_status(value: Any) -> str:
 
 def extract_claims_from_gate(payload: dict[str, Any]) -> dict[str, Any]:
     fields: dict[str, Any] = {}
+    # Quality section fields are at root level, not nested
+    root_sections = {"quality"}
     for section, names in EXTRACTORS.items():
-        section_payload = payload.get(section)
+        if section in root_sections:
+            section_payload = payload
+        else:
+            section_payload = payload.get(section)
         if not isinstance(section_payload, dict):
             section_payload = {}
         fields[section] = {
@@ -612,6 +627,8 @@ def extract_claims_from_gate(payload: dict[str, Any]) -> dict[str, Any]:
         "risks": list_items(payload.get("risks")),
         "openQuestions": list_items(payload.get("openQuestions")),
         "blockers": list_items(payload.get("blockers")),
+        "qualityProfiles": list_items(payload.get("qualityProfiles")),
+        "requiredEvidence": list_items(payload.get("requiredEvidence")),
     }
 
     claims: list[dict[str, Any]] = []
@@ -623,6 +640,8 @@ def extract_claims_from_gate(payload: dict[str, Any]) -> dict[str, Any]:
         claims.append({"id": "claim-success-signal", "kind": "success_signal", "text": str(success), "loadBearing": True, "source": "value-gate"})
     for index, assumption in enumerate(list_fields["assumptions"], 1):
         claims.append({"id": f"claim-assumption-{index:03d}", "kind": "assumption", "text": assumption, "loadBearing": True, "source": "value-gate"})
+    for index, profile in enumerate(list_fields["qualityProfiles"], 1):
+        claims.append({"id": f"claim-quality-profile-{index:03d}", "kind": "quality_profile", "text": profile, "loadBearing": True, "source": "value-gate"})
 
     return {
         "schemaVersion": SCHEMA_VERSION,
@@ -946,6 +965,16 @@ def evaluate_gate(payload: dict[str, Any], command: str, base: Path) -> tuple[di
     if status == "blocked" and not list_items(payload.get("blockers")) and not list_items(payload.get("openQuestions")):
         warnings.append("blocked status should name at least one blocker or open question")
 
+    # Quality posture: warn if non-trivial change has no quality profiles
+    if status in {"pass", "proceed_with_assumptions"}:
+        quality_profiles = list_items(payload.get("qualityProfiles"))
+        if not quality_profiles:
+            warnings.append(
+                "non-trivial change has no qualityProfiles specified; consider adding "
+                "quality profiles (e.g., incremental-implementation, test-driven-change) "
+                "and an Execution Quality Contract section to the pending proposal.md"
+            )
+
     if errors:
         checks.append({"name": "pre_spec_artifact", "status": "fail", "message": "; ".join(errors)})
         report = json_report(
@@ -1140,7 +1169,13 @@ def render_proposal(payload: dict[str, Any]) -> str:
     assumptions = list_items(payload.get("assumptions"))
     non_goals = list_items(payload.get("nonGoals"))
     open_questions = list_items(payload.get("openQuestions"))
+    quality_profiles = list_items(payload.get("qualityProfiles"))
+    required_evidence = list_items(payload.get("requiredEvidence"))
+    review_posture = str(payload.get("reviewPosture", "")).strip() or "standard"
+    ship_posture = str(payload.get("shipPosture", "")).strip() or "standard"
     assumption_posture = "[ASSUMPTION]-tagged and explicitly acknowledged" if status == "proceed_with_assumptions" else "confirmed or not material"
+    quality_profiles_str = ", ".join(f"`{p}`" for p in quality_profiles) if quality_profiles else "`incremental-implementation`, `test-driven-change`, `code-review-required`"
+    required_evidence_str = ", ".join(f"`{e}`" for e in required_evidence) if required_evidence else "`validators-ran`, `locked-artifacts-unchanged`"
     return f"""# {change_name}
 
 ## Why
@@ -1173,6 +1208,17 @@ Beneficiary: {value(payload, ("valueFrame", "beneficiary"))}
 ## Non-Goals
 
 {markdown_bullets(non_goals, empty="TBD")}
+
+## Execution Quality Contract
+
+This section defines the quality posture and required evidence for this change.
+It is consumed by goal-dag's quality profile mapper and goal-runner's validation
+controller.
+
+- Quality profiles: {quality_profiles_str}
+- Required evidence: {required_evidence_str}
+- Review posture: {review_posture}
+- Ship posture: {ship_posture}
 
 ## Pipeline Handoff Boundary
 
@@ -1301,6 +1347,17 @@ TBD
 | Risk | Severity | Mitigation |
 | --- | --- | --- |
 {risk_rows}
+
+## Engineering Quality
+
+This section records source-grounded engineering quality decisions that supplement
+the Execution Quality Contract from proposal.md.
+
+- Quality profiles reiterated: {value(payload, ("qualityProfiles",), "from value gate")}
+- Required evidence: {value(payload, ("requiredEvidence",), "from value gate")}
+- Verification tooling: {value(payload, ("valueFrame", "verificationPath"))}
+- Performance/SLA targets: TBD
+- Observability requirements: TBD
 
 ## Verification Plan
 

@@ -577,6 +577,17 @@ Explain the current failure mode and why it matters now.>
 - <Explicitly out-of-scope item>
 - <Explicitly out-of-scope item>
 
+## Execution Quality Contract
+
+This section defines the quality posture and required evidence for this change.
+It is consumed by goal-dag's quality profile mapper and goal-runner's validation
+controller. For non-trivial or sensitive changes, fill all four fields.
+
+- Quality profiles: `<incremental-implementation, test-driven-change, code-review-required, etc.>`
+- Required evidence: `<validators-ran, locked-artifacts-unchanged, etc.>`
+- Review posture: `<standard | elevated | critical>`
+- Ship posture: `<standard | elevated | critical>`
+
 ## Pipeline Handoff Boundary
 
 - Stage 1 output: governed OpenSpec sources only.
@@ -701,6 +712,18 @@ Template:
 - <unit/schema validation>
 - <integration/API validation>
 - <manual/E2E validation>
+
+## Engineering Quality
+
+This section records source-grounded engineering quality decisions that supplement
+the Execution Quality Contract from proposal.md. Fill when the change is
+non-trivial or sensitive.
+
+- Quality profiles reiterated: <from Execution Quality Contract>
+- Required evidence: <from Execution Quality Contract>
+- Verification tooling: <tooling used for deterministic validation>
+- Performance/SLA targets: <threshold or N/A>
+- Observability requirements: <metrics, traces, logs, alerts or N/A>
 
 ## Execution Handoff Notes
 
@@ -975,6 +998,10 @@ Required explainer qualities:
   notes when source-grounded;
 - verification plan;
 - risk register and high-risk filter;
+- quality profiles section showing assigned profiles, grounding, and posture;
+- required evidence checklist sourced from the Execution Quality Contract;
+- review/audit/preflight posture summary when the change is non-trivial or
+  sensitive;
 - copyable implementation/review/verification agent prompts;
 - copy controls for decision summary and task JSON export when source-grounded.
 
@@ -1067,6 +1094,17 @@ otherwise record assumptions/open questions.
 - Every load-bearing source claim landed somewhere.
 - Dropped content was non-load-bearing or recorded as intentionally omitted.
 - Existing authoritative specs were extended, not contradicted.
+
+#### Quality posture
+
+- Non-trivial changes have an Execution Quality Contract in `proposal.md`.
+- Quality profiles are either explicitly stated or keyword-inferred with a warning.
+- Required evidence is specified and matches the validation posture.
+- Review posture and ship posture are set for sensitive/high-stakes changes.
+- Downstream `source-manifest.json` carries quality profiles and required evidence
+  for the goal-dag quality profile mapper.
+- The `change-explainer.html` shows quality profiles, required evidence, and
+  review/audit/preflight posture when present.
 
 ### 19. Archive-readiness check
 
