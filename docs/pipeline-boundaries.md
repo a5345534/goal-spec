@@ -10,6 +10,11 @@ This document defines the boundary for `goal-spec` in the goal execution pipelin
 user goal -> OpenSpec change package
 ```
 
+Stage 1 authoring uses the role profile in
+`profiles/goal-spec-authoring-profile.json`. The profile maps collector, judge,
+writer, explainer, and reviewer roles to abstract `modelClass` values only;
+concrete provider/model ids are not Stage 1 source truth.
+
 ### Input
 
 `goal-spec` accepts a user goal, feature request, architecture decision, bug direction, or comparable product/engineering intent.
@@ -69,7 +74,7 @@ The downstream consumer is `goal-dag`.
 - produce `.dag.json`;
 - call `/goal`;
 - execute implementation tasks;
-- decide runtime scheduling, model routing, worktree allocation, subagent execution, or runtime validation;
+- decide runtime scheduling, model routing, worktree allocation, subagent execution, concrete model binding, or runtime validation;
 - treat `change-explainer.html` as an authoritative source;
 - treat `.goal-spec/` workflow state as an OpenSpec source of truth.
 

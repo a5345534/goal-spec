@@ -19,9 +19,37 @@ OpenSpec artifacts:
 It also covers update/review/explainer-only/archive-preflight modes for an
 existing OpenSpec change package.
 
-The skill keeps all authoring instructions directly in `SKILL.md`; there are no
-separate reference files to load for normal use. Automation needed by the skill
-is bundled under `scripts/` and uses only Python's standard library.
+Stage 1 authoring roles are declared in
+`profiles/goal-spec-authoring-profile.json` and documented in
+`docs/authoring-agent-roles.md`. The profile maps roles to abstract
+`modelClass` values only:
+
+- `collector` → `evidence-collector`
+- `judge` → `value-judge`
+- `writer` → `spec-writer`
+- `explainer` → `explainer-writer`
+- `reviewer` → `strict-reviewer`
+
+Concrete provider/model ids are deliberately absent from the profile; runtime
+resolution belongs to `goal-runner` harness binding catalogs.
+
+The skill keeps all authoring instructions directly in `SKILL.md`; the role
+profile is a machine-readable contract, not a separate prompt reference needed
+for normal use. Automation needed by the skill is bundled under `scripts/` and
+uses only Python's standard library.
+
+## Role-separated authoring model
+
+The authoring workflow separates evidence collection, value judgment, writing,
+explainer generation, and review so one role does not both gather evidence and
+approve the value/scope decision. The bundled schema at
+`schemas/goal-spec-authoring-profile.schema.json` fixes the expected role →
+`modelClass` mapping and rejects concrete-model semantics at the profile layer.
+
+For existing changes, collector/reviewer flows read `source-manifest.json` first
+and then authoritative sources only. When a source lacks deterministic shell
+validators, `goal-spec` records acceptance criteria instead of inventing
+commands.
 
 ## BMAD-inspired improvements
 
@@ -164,9 +192,9 @@ scripts/check-change-explainer.sh <change-name> --project-root <target-root> --r
 
 ## Relationship to nearby projects
 
-- `goal-spec` owns the prompt-level workflow and the fallback automation
-  needed to scaffold, refresh manifests, validate explainers, and run archive
-  preflight checks.
+- `goal-spec` owns the prompt-level workflow, the Stage 1 authoring-role
+  profile, and the fallback automation needed to scaffold, refresh manifests,
+  validate explainers, and run archive preflight checks.
 - External workflow packages or project-local `openspec/scripts/*` are not part
   of the required writer-skill path. If a project explicitly requires stricter
   local policy checks, treat those checks as additional evidence after the

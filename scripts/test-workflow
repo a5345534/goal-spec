@@ -1133,6 +1133,45 @@ test_ack_without_rationale() {
     return $ok
 }
 
+test_authoring_profile_abstract_model_classes() {
+    python3 - <<PY
+import json
+from pathlib import Path
+root = Path('$PROJECT_DIR')
+profile_path = root / 'profiles/goal-spec-authoring-profile.json'
+schema_path = root / 'schemas/goal-spec-authoring-profile.schema.json'
+doc_path = root / 'docs/authoring-agent-roles.md'
+profile_text = profile_path.read_text()
+profile = json.loads(profile_text)
+schema = json.loads(schema_path.read_text())
+expected = {
+    'collector': 'evidence-collector',
+    'judge': 'value-judge',
+    'writer': 'spec-writer',
+    'explainer': 'explainer-writer',
+    'reviewer': 'strict-reviewer',
+}
+roles = profile['roles']
+assert set(roles) == set(expected), roles
+for role, model_class in expected.items():
+    assert roles[role]['modelClass'] == model_class, (role, roles[role]['modelClass'])
+assert roles['collector']['modelClass'] != roles['judge']['modelClass']
+assert profile['modelClassPolicy']['profileContainsConcreteModels'] is False
+assert set(profile['modelClassPolicy']['allowedModelClasses']) == set(expected.values())
+rule_ids = {rule['id']: rule for rule in profile['separationRules']}
+assert rule_ids['collector-judge-separation']['required'] is True
+assert rule_ids['judge-writer-separation']['required'] is True
+for banned in ('openai-codex/', 'deepseek/', 'anthropic/', 'local-'):
+    assert banned not in profile_text, banned
+schema_roles = schema['properties']['roles']['properties']
+assert schema_roles['collector']['allOf'][1]['properties']['modelClass']['const'] == 'evidence-collector'
+assert schema_roles['judge']['allOf'][1]['properties']['modelClass']['const'] == 'value-judge'
+doc = doc_path.read_text()
+for role, model_class in expected.items():
+    assert role in doc and model_class in doc, (role, model_class)
+PY
+}
+
 # --- main ---
 
 echo ""
@@ -1185,6 +1224,11 @@ run_test "fails before gate: blocked (20)"                      test_write_spec_
 run_test "fails before gate: proceed_with_assumptions no ack (30)" test_write_spec_before_gate_proceed_no_ack
 run_test "succeeds after pass gate (0)"                          test_write_spec_after_pass
 run_test "succeeds with proceed_with_assumptions + ack (0)"      test_write_spec_proceed_with_ack
+echo ""
+
+# Section: Authoring profile
+echo "--- authoring profile ---"
+run_test "abstract role -> modelClass mapping" test_authoring_profile_abstract_model_classes
 echo ""
 
 # --- summary ---

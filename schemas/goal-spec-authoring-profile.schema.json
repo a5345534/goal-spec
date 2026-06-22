@@ -1,0 +1,114 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/a5345534/goal-spec/schemas/goal-spec-authoring-profile.schema.json",
+  "title": "Goal Spec Authoring Profile",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "description", "roles", "separationRules", "sourceTruthRules", "modelClassPolicy"],
+  "properties": {
+    "schemaVersion": { "const": "1.0" },
+    "description": { "type": "string", "minLength": 1 },
+    "roles": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["collector", "judge", "writer", "explainer", "reviewer"],
+      "properties": {
+        "collector": {
+          "allOf": [
+            { "$ref": "#/$defs/role" },
+            { "properties": { "modelClass": { "const": "evidence-collector" } } }
+          ]
+        },
+        "judge": {
+          "allOf": [
+            { "$ref": "#/$defs/role" },
+            { "properties": { "modelClass": { "const": "value-judge" } } }
+          ]
+        },
+        "writer": {
+          "allOf": [
+            { "$ref": "#/$defs/role" },
+            { "properties": { "modelClass": { "const": "spec-writer" } } }
+          ]
+        },
+        "explainer": {
+          "allOf": [
+            { "$ref": "#/$defs/role" },
+            { "properties": { "modelClass": { "const": "explainer-writer" } } }
+          ]
+        },
+        "reviewer": {
+          "allOf": [
+            { "$ref": "#/$defs/role" },
+            { "properties": { "modelClass": { "const": "strict-reviewer" } } }
+          ]
+        }
+      }
+    },
+    "separationRules": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "required", "description"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$" },
+          "required": { "const": true },
+          "description": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "sourceTruthRules": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "modelClassPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["profileContainsConcreteModels", "concreteResolutionOwner", "allowedModelClasses"],
+      "properties": {
+        "profileContainsConcreteModels": { "const": false },
+        "concreteResolutionOwner": { "const": "goal-runner harness binding catalogs" },
+        "allowedModelClasses": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/modelClass" },
+          "contains": { "const": "value-judge" }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "modelClass": {
+      "type": "string",
+      "enum": [
+        "evidence-collector",
+        "value-judge",
+        "spec-writer",
+        "explainer-writer",
+        "strict-reviewer"
+      ]
+    },
+    "role": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["modelClass", "purpose", "responsibilities", "mustNot"],
+      "properties": {
+        "modelClass": { "$ref": "#/$defs/modelClass" },
+        "purpose": { "type": "string", "minLength": 1 },
+        "responsibilities": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "mustNot": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 }
+        }
+      }
+    }
+  }
+}

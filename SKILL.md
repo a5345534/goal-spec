@@ -59,6 +59,26 @@ automation for scaffolding, source manifests, explainer validation, and archive
 preflight. External workflow packages or project-local `openspec/scripts/*` are
 not part of the required writer-skill path.
 
+## Role-separated authoring profile
+
+Stage 1 authoring roles are declared in
+`profiles/goal-spec-authoring-profile.json` and described in
+`docs/authoring-agent-roles.md`. The profile is part of this package and uses
+abstract `modelClass` values only:
+
+- `collector` → `evidence-collector`
+- `judge` → `value-judge`
+- `writer` → `spec-writer`
+- `explainer` → `explainer-writer`
+- `reviewer` → `strict-reviewer`
+
+Keep collector and judge separate: the role that gathers source evidence must
+not be the role that decides the value gate. Keep judge and writer separate: the
+role that approves value/scope must not silently expand that scope while writing.
+Concrete provider/model ids must never appear in this authoring profile or in
+OpenSpec authoring guidance; concrete resolution belongs to downstream
+`goal-runner` harness binding catalogs.
+
 ## BMAD-inspired enhancements included
 
 This skill borrows the useful planning patterns from BMAD-style workflows and
@@ -68,7 +88,8 @@ maps them into OpenSpec authoring:
   concern scan.
 - **Structured value gate before scaffolding**: test expected value, user
   benefit, success evidence, no-build alternatives, and the smallest useful
-  scope before creating an OpenSpec package.
+  scope before creating an OpenSpec package. The `judge` role uses the
+  `value-judge` modelClass for this decision surface.
 - **Phase-aware workflow state**: keep workspace-local
   `.goal-spec/changes/<change-name>/workflow-state.json` progress,
   extract/reflect/recover reports, claim graph preservation evidence, and loop
@@ -85,7 +106,9 @@ maps them into OpenSpec authoring:
   implementation or verification decision must land in proposal/design/tasks/spec
   or be recorded as an open question/non-goal; workflow claim graphs can block
   pre-spec completion until load-bearing claims are preserved or explicitly
-  deferred.
+  deferred. The `collector` role uses the `evidence-collector` modelClass and
+  the `reviewer` role uses the `strict-reviewer` modelClass for this evidence
+  and preservation loop.
 - **Quality rubric**: pre-spec value quality plus post-draft decision-readiness,
   done-ness clarity, scope honesty, downstream usability, boundary fit, and
   preservation.
@@ -1110,6 +1133,7 @@ When done, report:
 - Do not convert the change into `/goal` or Goal DAG output from this skill.
 - Do not produce `GoalDagSpec`, `.dag.json`, `.trace.json`, or `/goal` commands.
 - Do not decide node decomposition, model routing, worktree allocation, subagent scheduling, or runtime validation.
+- Do not put concrete provider/model ids in the authoring role profile or OpenSpec authoring guidance; use abstract `modelClass` roles only.
 - When preparing a change for downstream execution planning, make implementation-relevant claims explicit in proposal/design/tasks/specs, not only in `change-explainer.html`.
 - Do not invent requirements absent from user input or source evidence.
 - Do not scaffold an OpenSpec package before the Value Challenge Gate passes,

@@ -14,7 +14,7 @@ Stage 3: Runtime Execution         runtime DAG JSON or single objective -> durab
 
 This repository implements **Stage 1: Specification Authoring**.
 
-It must know the Stage 1 output contract. It may describe downstream handoff evidence. It must not depend on, call into, or name a concrete downstream planning or runtime repository.
+It must know the Stage 1 output contract. It may describe downstream handoff evidence and the shared modelClass ownership boundary. It must not depend on or call into a concrete downstream planning or runtime repository.
 
 ## Owns
 
@@ -23,6 +23,7 @@ This repository owns:
 - value challenge before writing a specification;
 - discovery, assumptions, alternatives, non-goals, risks, and success signals;
 - governed specification package authoring;
+- Stage 1 authoring-role profile that maps collector/judge/writer/explainer/reviewer to abstract `modelClass` values;
 - proposal/design/tasks/spec-delta structure;
 - `source-manifest.json` creation and validation;
 - optional human-readable explainer generation and validation when the target project requires it;
@@ -37,7 +38,7 @@ This repository must not own or perform:
 - `.dag.json` or `.trace.json` generation;
 - runtime command invocation;
 - subagent planning or scheduling;
-- model routing;
+- runtime model routing or concrete model binding;
 - worktree allocation;
 - runtime validation policy;
 - execution, implementation, merge, or cleanup behavior;
@@ -108,7 +109,7 @@ Execution handoff notes must not contain runtime DAG fields or ready-to-execute 
 
 - runtime dependency edges as DAG JSON;
 - model scenario assignments;
-- model routing tables;
+- runtime model routing tables;
 - workspace strategy;
 - completion gates;
 - runtime node definitions;

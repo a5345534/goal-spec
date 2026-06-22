@@ -15,12 +15,19 @@
     "goal-spec",
     "agent-skills"
   ],
+  "scripts": {
+    "test": "scripts/test-workflow"
+  },
   "files": [
     "SKILL.md",
     "README.md",
     "docs/pipeline-boundaries.md",
+    "docs/project-responsibility.md",
+    "docs/authoring-agent-roles.md",
+    "profiles/goal-spec-authoring-profile.json",
     "scripts/goal-spec-openspec.py",
     "scripts/goal-spec-workflow",
+    "scripts/test-workflow",
     "scripts/agent-goal-writer-openspec.py",
     "scripts/agent-goal-writer-workflow",
     "scripts/check-change-explainer.sh",
@@ -29,7 +36,8 @@
     "scripts/openspec-propose",
     "scripts/openspec-validate-explainer",
     "scripts/openspec-validate-source-manifest",
-    "schemas/source-manifest.schema.json"
+    "schemas/source-manifest.schema.json",
+    "schemas/goal-spec-authoring-profile.schema.json"
   ],
   "pi": {
     "skills": [

@@ -1,0 +1,115 @@
+{
+  "schemaVersion": "1.0",
+  "description": "Authoring-role profile for goal-spec Stage 1 OpenSpec work. Roles declare abstract modelClass values only; concrete provider/model ids are resolved by downstream harness bindings.",
+  "roles": {
+    "collector": {
+      "modelClass": "evidence-collector",
+      "purpose": "Collect and cite source truth without deciding value, scope, or final wording.",
+      "responsibilities": [
+        "Read source-manifest.json first for existing changes, then read only authoritative sources listed there.",
+        "Extract source-grounded claims, constraints, risks, validation signals, and open questions.",
+        "Label assumptions explicitly and keep source citations attached to load-bearing claims."
+      ],
+      "mustNot": [
+        "Make the value-gate decision.",
+        "Invent requirements or validation commands.",
+        "Choose concrete provider/model ids."
+      ]
+    },
+    "judge": {
+      "modelClass": "value-judge",
+      "purpose": "Evaluate value, scope, no-build/smaller-scope alternatives, and archive/review readiness.",
+      "responsibilities": [
+        "Challenge low-value, over-scoped, under-evidenced, or boundary-violating requests.",
+        "Decide whether the value gate is pass, no-build, smaller-scope, ask-before-drafting, or proceed_with_assumptions.",
+        "Require source-grounded rationale and explicit assumptions for any accepted uncertainty."
+      ],
+      "mustNot": [
+        "Collect new source claims after judging without routing them back through collector evidence.",
+        "Write final OpenSpec prose as the same role that made the value decision.",
+        "Choose concrete provider/model ids."
+      ]
+    },
+    "writer": {
+      "modelClass": "spec-writer",
+      "purpose": "Write proposal.md, design.md, tasks.md, and specs/**/spec.md from the approved kernel and cited evidence.",
+      "responsibilities": [
+        "Preserve the value-gate outcome, spec kernel, constraints, non-goals, and success signal.",
+        "Keep requirements normative, testable, and source-grounded.",
+        "Refresh source-manifest.json after authoritative sources change."
+      ],
+      "mustNot": [
+        "Override the judge's value decision silently.",
+        "Put DAG runtime fields, model routing, scheduling, or worktree strategy into OpenSpec sources.",
+        "Choose concrete provider/model ids."
+      ]
+    },
+    "explainer": {
+      "modelClass": "explainer-writer",
+      "purpose": "Produce the non-authoritative decision-review change-explainer.html from authoritative OpenSpec sources.",
+      "responsibilities": [
+        "Read source-manifest.json before generating the explainer.",
+        "Represent decisions, risks, verification, and implementation slices without contradicting markdown/spec sources.",
+        "Run the strict explainer validator when a decision-review explainer is required."
+      ],
+      "mustNot": [
+        "Introduce new requirements, promises, risks, or migrations absent from authoritative sources.",
+        "Treat change-explainer.html as source truth.",
+        "Choose concrete provider/model ids."
+      ]
+    },
+    "reviewer": {
+      "modelClass": "strict-reviewer",
+      "purpose": "Review the OpenSpec package for preservation, boundary fit, validation readiness, and archive readiness.",
+      "responsibilities": [
+        "Check that load-bearing collector claims landed in authoritative OpenSpec sources or explicit open questions/non-goals.",
+        "Verify source-manifest freshness and explainer fidelity when applicable.",
+        "Block archive/readiness claims when unchecked tasks, stale manifests, invalid explainers, or unsupported evidence remain."
+      ],
+      "mustNot": [
+        "Rewrite source truth while reviewing unless explicitly asked to make fixes.",
+        "Accept concrete provider/model ids in authoring profile or OpenSpec routing guidance.",
+        "Choose concrete provider/model ids."
+      ]
+    }
+  },
+  "separationRules": [
+    {
+      "id": "collector-judge-separation",
+      "required": true,
+      "description": "collector and judge are separate roles; evidence collection must not be the same role as value judgment."
+    },
+    {
+      "id": "judge-writer-separation",
+      "required": true,
+      "description": "judge decides whether/what to draft; writer turns an approved kernel into OpenSpec sources without silently expanding scope."
+    },
+    {
+      "id": "explainer-non-authoritative",
+      "required": true,
+      "description": "explainer writes only the review companion; markdown/spec sources remain authoritative."
+    },
+    {
+      "id": "reviewer-final-gate",
+      "required": true,
+      "description": "reviewer performs the final preservation/readiness check after writer/explainer work."
+    }
+  ],
+  "sourceTruthRules": [
+    "For existing OpenSpec changes, read source-manifest.json first and then the authoritative sources it lists.",
+    "Authoritative sources are proposal.md, design.md, tasks.md, and specs/**/spec.md.",
+    "change-explainer.html and .goal-spec/ workflow artifacts are non-authoritative.",
+    "Do not invent validators; use acceptance criteria when sources lack deterministic shell commands."
+  ],
+  "modelClassPolicy": {
+    "profileContainsConcreteModels": false,
+    "concreteResolutionOwner": "goal-runner harness binding catalogs",
+    "allowedModelClasses": [
+      "evidence-collector",
+      "value-judge",
+      "spec-writer",
+      "explainer-writer",
+      "strict-reviewer"
+    ]
+  }
+}
