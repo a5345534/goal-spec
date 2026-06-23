@@ -204,7 +204,6 @@
       "branches": {
         "approve_openspec_authoring": "spec_kernel",
         "approve_smaller_scope_openspec_authoring": "spec_kernel",
-        "continue_discussion": "value_logic_closure_assessment",
         "accept_no_build_recommendation": "terminal",
         "abandon_proposal": "terminal",
         "scope_changed_or_unclear": "problem_scope_framing",

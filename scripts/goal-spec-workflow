@@ -1905,6 +1905,18 @@ def _run_canonical_gate_checks(lcg, approval, cvr, sk, base):
         for field in optional_present:
             if field not in sk:
                 errors.append(f"spec-kernel missing field: {field}")
+    # Problem-scope: user gate must exist and be confirm_scope_for_analysis
+    # Only enforced when problem-scope artifacts are present (backward compat)
+    psug = _load_artifact(base, PROBLEM_SCOPE_USER_GATE_FILE)
+    pma_check = _load_artifact(base, PROPOSAL_MEANING_ANALYSIS_FILE)
+    has_problem_scope = bool(psug or _load_artifact(base, PROBLEM_SCOPE_FRAMING_FILE) or _load_artifact(base, SCOPE_CLOSURE_GATE_FILE))
+    if has_problem_scope:
+        if not psug:
+            errors.append(f"{PROBLEM_SCOPE_USER_GATE_FILE} not found — scope must be confirmed before write-spec")
+        elif psug.get("decision") != "confirm_scope_for_analysis":
+            errors.append(f"problem-scope-user-gate decision is {psug.get('decision')}, not confirm_scope_for_analysis")
+        if pma_check:
+            errors.extend(_check_required_input_digests(pma_check, base, PROPOSAL_MEANING_ANALYSIS_FILE))
     for fp in base.rglob("*.json"):
         if "role-runs" in str(fp): continue
         try: text = fp.read_text()
@@ -1945,6 +1957,23 @@ def _canonical_json_digest(data):
 def _file_digest(path):
     """SHA-256 over exact UTF-8 file content."""
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+REQUIRED_INPUT_DIGESTS = {
+    PROJECT_MODEL_FILE: [PROPOSAL_INTAKE_FILE],
+    PROBLEM_SCOPE_FRAMING_FILE: [PROPOSAL_INTAKE_FILE, PROJECT_MODEL_FILE],
+    SCOPE_CLOSURE_GATE_FILE: [PROBLEM_SCOPE_FRAMING_FILE],
+    PROBLEM_SCOPE_CLARIFICATION_REQUEST_FILE: [PROBLEM_SCOPE_FRAMING_FILE, SCOPE_CLOSURE_GATE_FILE],
+    PROBLEM_SCOPE_CLARIFICATION_RESPONSE_FILE: [PROBLEM_SCOPE_CLARIFICATION_REQUEST_FILE],
+    PROBLEM_SCOPE_USER_GATE_FILE: [PROBLEM_SCOPE_FRAMING_FILE, SCOPE_CLOSURE_GATE_FILE],
+    PROPOSAL_MEANING_ANALYSIS_FILE: [PROPOSAL_INTAKE_FILE, PROJECT_MODEL_FILE, PROBLEM_SCOPE_FRAMING_FILE, SCOPE_CLOSURE_GATE_FILE, PROBLEM_SCOPE_USER_GATE_FILE],
+    VALUE_LOGIC_CLOSURE_ASSESSMENT_FILE: [PROJECT_MODEL_FILE, PROPOSAL_MEANING_ANALYSIS_FILE],
+    LOGIC_CLOSURE_GATE_FILE: [VALUE_LOGIC_CLOSURE_ASSESSMENT_FILE],
+    CHANGE_VALUE_ASSESSMENT_REPORT_FILE: [LOGIC_CLOSURE_GATE_FILE, VALUE_LOGIC_CLOSURE_ASSESSMENT_FILE],
+    OPENSPEC_AUTHORING_APPROVAL_GATE_FILE: [CHANGE_VALUE_ASSESSMENT_REPORT_FILE],
+    SPEC_KERNEL_FILE: [OPENSPEC_AUTHORING_APPROVAL_GATE_FILE],
+    PRE_SPEC_GATE_FILE: [SPEC_KERNEL_FILE, OPENSPEC_AUTHORING_APPROVAL_GATE_FILE],
+    WRITE_SPEC_STATUS_FILE: [SPEC_KERNEL_FILE, PRE_SPEC_GATE_FILE],
+}
 
 
 def _check_required_input_digests(data, base, filename):
@@ -2063,19 +2092,21 @@ def cmd_validate_proposal_meaning_analysis(args):
         dump(json_report("validate-proposal-meaning-analysis","invalid_artifact","usage_error",EXIT_USAGE,errors=[str(err)]))
         return EXIT_USAGE
     base = _artifact_dir(root, getattr(args,'artifact_dir',None), change_name)
-    # Check user gate prerequisite
+    # Check user gate prerequisite (only when problem-scope artifacts exist)
     psug = _load_artifact(base, PROBLEM_SCOPE_USER_GATE_FILE)
-    if not psug:
-        dump(json_report("validate-proposal-meaning-analysis","invalid_artifact","missing_scope_gate",EXIT_INVALID_ARTIFACT,errors=[f"{PROBLEM_SCOPE_USER_GATE_FILE} not found — scope must be confirmed before meaning analysis"]))
-        return EXIT_INVALID_ARTIFACT
-    if psug.get("decision") != "confirm_scope_for_analysis":
-        dump(json_report("validate-proposal-meaning-analysis","invalid_artifact","scope_not_confirmed",EXIT_BLOCKED,errors=[f"problem-scope-user-gate decision is {psug.get('decision')}, not confirm_scope_for_analysis"]))
-        return EXIT_BLOCKED
-    # Check scope closure gate
-    scg = _load_artifact(base, SCOPE_CLOSURE_GATE_FILE)
-    if not scg or scg.get("status") != "closed":
-        dump(json_report("validate-proposal-meaning-analysis","invalid_artifact","scope_not_closed",EXIT_BLOCKED,errors=["scope-closure-gate.status != closed"]))
-        return EXIT_BLOCKED
+    has_scope_artifacts = bool(psug or _load_artifact(base, PROBLEM_SCOPE_FRAMING_FILE) or _load_artifact(base, SCOPE_CLOSURE_GATE_FILE))
+    if has_scope_artifacts:
+        if not psug:
+            dump(json_report("validate-proposal-meaning-analysis","invalid_artifact","missing_scope_gate",EXIT_INVALID_ARTIFACT,errors=[f"{PROBLEM_SCOPE_USER_GATE_FILE} not found — scope must be confirmed before meaning analysis"]))
+            return EXIT_INVALID_ARTIFACT
+        if psug.get("decision") != "confirm_scope_for_analysis":
+            dump(json_report("validate-proposal-meaning-analysis","invalid_artifact","scope_not_confirmed",EXIT_BLOCKED,errors=[f"problem-scope-user-gate decision is {psug.get('decision')}, not confirm_scope_for_analysis"]))
+            return EXIT_BLOCKED
+        # Check scope closure gate
+        scg = _load_artifact(base, SCOPE_CLOSURE_GATE_FILE)
+        if not scg or scg.get("status") != "closed":
+            dump(json_report("validate-proposal-meaning-analysis","invalid_artifact","scope_not_closed",EXIT_BLOCKED,errors=["scope-closure-gate.status != closed"]))
+            return EXIT_BLOCKED
     # Check required inputDigests
     pma = _load_artifact(base, PROPOSAL_MEANING_ANALYSIS_FILE)
     if pma:
@@ -2175,6 +2206,7 @@ def cmd_check_freshness(args):
     for filename in REQUIRED_FRESHNESS_ARTIFACTS:
         data = _load_artifact(base, filename)
         if not data: continue
+        errors.extend(_check_required_input_digests(data, base, filename))
         errors.extend(_check_input_digests(data, base))
     if errors:
         dump(json_report("check-freshness","stale","digest_mismatch",EXIT_BLOCKED,errors=errors))
