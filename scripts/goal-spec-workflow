@@ -1704,122 +1704,118 @@ def cmd_gate(args: argparse.Namespace) -> int:
     return code
 
 
+def _project_canonical_payload(cvr, approval, sk, change_name):
+    """Project canonical artifacts into a write-spec-compatible payload."""
+    value_frame = {
+        "beneficiary": sk.get("beneficiary", "") or "Users of the goal-spec authoring pipeline",
+        "problemOrOpportunity": sk.get("why", "") or cvr.get("summary", ""),
+        "whyNow": cvr.get("summary", ""),
+        "successSignal": sk.get("successSignal", "") or sk.get("success_signal", ""),
+        "costRiskShape": cvr.get("costRiskShape", "") or "Moderate schema/script/docs change",
+        "noBuildCandidate": "",
+        "smallerScopeCandidate": "",
+        "scopeSummary": approval.get("approvedScope", "") or "full",
+        "verificationPath": "",
+    }
+    return {
+        "schemaVersion": SCHEMA_VERSION,
+        "changeName": change_name,
+        "capability": sk.get("capability", change_name),
+        "goal": sk.get("why", cvr.get("summary", change_name)),
+        "valueFrame": value_frame,
+        "decision": {
+            "status": "pass",
+            "rationale": approval.get("approvalRationale", "Approved via canonical OpenSpec Authoring Approval Gate"),
+            "noBuildConsidered": True,
+            "smallerScopeConsidered": True,
+        },
+        "specKernel": sk,
+        "changeValueReport": cvr,
+        "approvalGate": approval,
+        "canonicalSource": True,
+    }
+
+
 def cmd_write_spec(args: argparse.Namespace) -> int:
     root = project_root(args.project_root)
+    use_legacy = getattr(args, 'legacy_value_gate', False)
     try:
-        requested_change_name(args)
+        change_name = requested_change_name(args)
     except ValueError as err:
         report = json_report("write-spec", "invalid_artifact", "usage_error", EXIT_USAGE, errors=[str(err)])
         dump(report)
         return EXIT_USAGE
-    payload, error_report, base, artifact_warnings = load_gate(root, args.artifact_dir, "write-spec", positional_change_name(args))
-    if error_report is not None:
-        write_json(base / WRITE_SPEC_STATUS_FILE, error_report)
-        dump(error_report)
-        return int(error_report["exitCode"])
-    assert payload is not None
-    ack_report, ack_code = apply_acknowledgement(payload, args, base / VALUE_GATE_FILE)
-    if ack_report is not None:
-        add_report_warnings(ack_report, artifact_warnings)
-        write_json(base / WRITE_SPEC_STATUS_FILE, ack_report)
-        dump(ack_report)
-        return int(ack_code or EXIT_USAGE)
+    if not change_name and not use_legacy:
+        report = json_report("write-spec", "invalid_artifact", "missing_change_name", EXIT_USAGE, errors=["change-name required in strict canonical mode"])
+        dump(report)
+        return EXIT_USAGE
+    base = _artifact_dir(root, getattr(args, 'artifact_dir', None), change_name)
+    artifact_warnings: list[str] = []
 
-    # ── Canonical write-spec gate check (new flow) ──
-    write_errors: list[str] = []
-    lcg = _load_artifact(base, LOGIC_CLOSURE_GATE_FILE)
-    approval = _load_artifact(base, OPENSPEC_AUTHORING_APPROVAL_GATE_FILE)
-    cvr = _load_artifact(base, CHANGE_VALUE_ASSESSMENT_REPORT_FILE)
-    sk = _load_artifact(base, SPEC_KERNEL_FILE)
+    if use_legacy:
+        # ── Legacy mode: load value-gate.json, fall back to canonical if present ──
+        payload, error_report, legacy_base, legacy_warnings = load_gate(root, args.artifact_dir, "write-spec", change_name)
+        artifact_warnings = legacy_warnings
+        base = legacy_base
+        if error_report is not None:
+            write_json(base / WRITE_SPEC_STATUS_FILE, error_report)
+            dump(error_report)
+            return int(error_report["exitCode"])
+        assert payload is not None
+        ack_report, ack_code = apply_acknowledgement(payload, args, base / VALUE_GATE_FILE)
+        if ack_report is not None:
+            add_report_warnings(ack_report, artifact_warnings)
+            write_json(base / WRITE_SPEC_STATUS_FILE, ack_report)
+            dump(ack_report)
+            return int(ack_code or EXIT_USAGE)
 
-    # Default: strict canonical gate check. Pass --legacy-value-gate to allow
-    # fallback to the old value-gate.json path.
-    use_legacy = getattr(args, 'legacy_value_gate', False)
-    has_canonical = bool(lcg or approval or cvr or sk)
+        # Canonical check when artifacts exist in legacy mode
+        lcg = _load_artifact(base, LOGIC_CLOSURE_GATE_FILE)
+        approval = _load_artifact(base, OPENSPEC_AUTHORING_APPROVAL_GATE_FILE)
+        cvr = _load_artifact(base, CHANGE_VALUE_ASSESSMENT_REPORT_FILE)
+        sk = _load_artifact(base, SPEC_KERNEL_FILE)
+        has_canonical = bool(lcg or approval or cvr or sk)
+        if has_canonical:
+            write_errors = _run_canonical_gate_checks(lcg, approval, cvr, sk, base)
+            if write_errors:
+                report = json_report("write-spec", "blocked", "gate_not_passed", EXIT_BLOCKED, errors=write_errors, artifactDir=str(base))
+                add_report_warnings(report, artifact_warnings)
+                write_json(base / WRITE_SPEC_STATUS_FILE, report)
+                write_json(base / WRITE_SPEC_STATUS_FILE, report)
+                dump(report)
+                return EXIT_BLOCKED
 
-    if not use_legacy:
-        # ── Strict canonical mode (default) ──
-        if not lcg or lcg.get("status") != "closed":
-            write_errors.append("logic-closure-gate.status != closed")
-        if not cvr:
-            write_errors.append(f"{CHANGE_VALUE_ASSESSMENT_REPORT_FILE} not found")
-        else:
-            write_errors.extend(_check_input_digests(cvr, base))
-        if not approval:
-            write_errors.append(f"{OPENSPEC_AUTHORING_APPROVAL_GATE_FILE} not found")
-        elif approval.get("decision") not in ("approve_openspec_authoring", "approve_smaller_scope_openspec_authoring"):
-            write_errors.append(f"approval decision is {approval.get('decision')}, not an authoring approval")
-        else:
-            approval_digest_val = approval.get("inputDigests", {}).get(CHANGE_VALUE_ASSESSMENT_REPORT_FILE, "")
-            if cvr and approval_digest_val != _canonical_json_digest(cvr):
-                write_errors.append("approval gate digest does not match current change value report")
-        if not sk:
-            write_errors.append(f"{SPEC_KERNEL_FILE} not found")
-        # No runtime leakage
-        for fp in base.rglob("*.json"):
-            if "role-runs" in str(fp): continue
-            try: text = fp.read_text()
-            except: continue
-            write_errors.extend(_check_no_runtime_leakage(text, str(fp.relative_to(base))))
-        # No concrete model IDs
-        for fp in base.rglob("*.json"):
-            if "role-runs" in str(fp): continue
-            try: text = fp.read_text()
-            except: continue
-            write_errors.extend(_check_no_concrete_models(text, str(fp.relative_to(base))))
-
+        gate_report, gate_code = evaluate_gate(payload, "write-spec", base)
+        add_report_warnings(gate_report, artifact_warnings)
+        if not has_canonical and gate_code != EXIT_PASS:
+            write_json(base / WRITE_SPEC_STATUS_FILE, gate_report)
+            write_json(base / STATUS_FILE, gate_report)
+            dump(gate_report)
+            return gate_code
+    else:
+        # ── Strict canonical mode (default): canonical artifacts are the source ──
+        lcg = _load_artifact(base, LOGIC_CLOSURE_GATE_FILE)
+        approval = _load_artifact(base, OPENSPEC_AUTHORING_APPROVAL_GATE_FILE)
+        cvr = _load_artifact(base, CHANGE_VALUE_ASSESSMENT_REPORT_FILE)
+        sk = _load_artifact(base, SPEC_KERNEL_FILE)
+        write_errors = _run_canonical_gate_checks(lcg, approval, cvr, sk, base)
         if write_errors:
             report = json_report("write-spec", "blocked", "canonical_gate_not_passed", EXIT_BLOCKED, errors=write_errors, artifactDir=str(base))
-            add_report_warnings(report, artifact_warnings)
-            write_json(base / WRITE_SPEC_STATUS_FILE, report)
-            write_json(base / STATUS_FILE, report)
             dump(report)
             return EXIT_BLOCKED
-    elif has_canonical:
-        # ── Legacy mode: canonical check only when artifacts exist ──
-        if not lcg or lcg.get("status") != "closed":
-            write_errors.append("logic-closure-gate.status != closed")
-        if not cvr:
-            write_errors.append(f"{CHANGE_VALUE_ASSESSMENT_REPORT_FILE} not found")
-        else:
-            write_errors.extend(_check_input_digests(cvr, base))
-        if not approval:
-            write_errors.append(f"{OPENSPEC_AUTHORING_APPROVAL_GATE_FILE} not found")
-        elif approval.get("decision") not in ("approve_openspec_authoring", "approve_smaller_scope_openspec_authoring"):
-            write_errors.append(f"approval decision is {approval.get('decision')}, not an authoring approval")
-        else:
-            approval_digest_val = approval.get("inputDigests", {}).get(CHANGE_VALUE_ASSESSMENT_REPORT_FILE, "")
-            if cvr and approval_digest_val != _canonical_json_digest(cvr):
-                write_errors.append("approval gate digest does not match current change value report")
-        if not sk:
-            write_errors.append(f"{SPEC_KERNEL_FILE} not found")
-        for fp in base.rglob("*.json"):
-            if "role-runs" in str(fp): continue
-            try: text = fp.read_text()
-            except: continue
-            write_errors.extend(_check_no_runtime_leakage(text, str(fp.relative_to(base))))
-        for fp in base.rglob("*.json"):
-            if "role-runs" in str(fp): continue
-            try: text = fp.read_text()
-            except: continue
-            write_errors.extend(_check_no_concrete_models(text, str(fp.relative_to(base))))
-
-        if write_errors:
-            report = json_report("write-spec", "blocked", "gate_not_passed", EXIT_BLOCKED, errors=write_errors, artifactDir=str(base))
-            add_report_warnings(report, artifact_warnings)
-            write_json(base / WRITE_SPEC_STATUS_FILE, report)
-            write_json(base / STATUS_FILE, report)
-            dump(report)
-            return EXIT_BLOCKED
-
-    # Legacy fallback: evaluate_gate
-    gate_report, gate_code = evaluate_gate(payload, "write-spec", base)
-    add_report_warnings(gate_report, artifact_warnings)
-    if use_legacy and not has_canonical and gate_code != EXIT_PASS:
-        write_json(base / WRITE_SPEC_STATUS_FILE, gate_report)
-        write_json(base / STATUS_FILE, gate_report)
-        dump(gate_report)
-        return gate_code
+        # Project payload from canonical artifacts
+        payload = _project_canonical_payload(cvr, approval, sk, change_name)
+        # Create a synthetic gate report for downstream consumption
+        gate_report = {
+            "command": "write-spec",
+            "status": "pass",
+            "result": "canonical",
+            "allowed": True,
+            "exitCode": EXIT_PASS,
+            "exitCodeName": EXIT_CODE_NAMES[EXIT_PASS],
+            "artifactDir": str(base),
+            "canonicalSource": True,
+        }
 
     try:
         result = write_spec_package(payload, root, args, workflow_base=base)
@@ -1854,6 +1850,38 @@ def cmd_write_spec(args: argparse.Namespace) -> int:
     dump(report)
     return EXIT_PASS
 
+
+def _run_canonical_gate_checks(lcg, approval, cvr, sk, base):
+    """Run all canonical gate checks, return list of errors."""
+    errors = []
+    if not lcg or lcg.get("status") != "closed":
+        errors.append("logic-closure-gate.status != closed")
+    if not cvr:
+        errors.append(f"{CHANGE_VALUE_ASSESSMENT_REPORT_FILE} not found")
+    else:
+        errors.extend(_check_input_digests(cvr, base))
+    if not approval:
+        errors.append(f"{OPENSPEC_AUTHORING_APPROVAL_GATE_FILE} not found")
+    elif approval.get("decision") not in ("approve_openspec_authoring", "approve_smaller_scope_openspec_authoring"):
+        errors.append(f"approval decision is {approval.get('decision')}, not an authoring approval")
+    else:
+        approval_digest_val = approval.get("inputDigests", {}).get(CHANGE_VALUE_ASSESSMENT_REPORT_FILE, "")
+        if cvr and approval_digest_val != _canonical_json_digest(cvr):
+            errors.append("approval gate digest does not match current change value report")
+    if not sk:
+        errors.append(f"{SPEC_KERNEL_FILE} not found")
+    for fp in base.rglob("*.json"):
+        if "role-runs" in str(fp): continue
+        try: text = fp.read_text()
+        except: continue
+        errors.extend(_check_no_runtime_leakage(text, str(fp.relative_to(base))))
+    for fp in base.rglob("*.json"):
+        if "role-runs" in str(fp): continue
+        try: text = fp.read_text()
+        except: continue
+        errors.extend(_check_no_concrete_models(text, str(fp.relative_to(base))))
+    return errors
+
 # ── Canonical flow command handlers ──
 
 def _artifact_dir(root, artifact_dir, change_name):
@@ -1861,8 +1889,10 @@ def _artifact_dir(root, artifact_dir, change_name):
         base = Path(artifact_dir)
         if not base.is_absolute():
             base = root / base
-    else:
+    elif change_name:
         base = root / ARTIFACT_DIR / CHANGE_ARTIFACTS_DIR / change_name
+    else:
+        base = root / ARTIFACT_DIR
     base.mkdir(parents=True, exist_ok=True)
     return base
 
