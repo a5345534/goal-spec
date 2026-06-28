@@ -750,6 +750,11 @@ Kernel rules:
 - Success signal must be concrete enough to test, demo, or inspect.
 - Preserve stable terms. If a domain noun appears, define it once in design or
   the spec and reuse it consistently.
+- **Preserve for downstream triage**: every assumption, non-goal, success criterion,
+  and open question in the kernel is input to downstream DAG planning and runtime
+  controller-answer context. If a downstream subagent asks a question whose answer
+  is already recorded here, the controller SHOULD answer it without re-escalating
+  to the user.
 
 ### 8. Pick the change name and capability name
 
@@ -864,6 +869,12 @@ Rules:
   reasoning that affected scope.
 - Include non-goals when there is any chance of scope creep.
 - If the user request is ambiguous, ask before writing irreversible scope.
+- **Preserve for downstream planning and runtime triage**: Non-Goals, Success Signal,
+  Assumptions, and Open Questions MUST be explicit enough that a downstream DAG
+  planner or runtime controller can answer subagent questions without re-escalating
+  to the user. Mark each `[ASSUMPTION]` with enough context for a downstream agent
+  to apply or challenge it. Every open question SHOULD identify who must resolve it
+  and what decision is blocked until it is resolved.
 
 ### 11. Write `design.md`
 
@@ -989,6 +1000,16 @@ This section records execution-planning evidence for downstream tools. It is not
 
 - <things downstream execution must not implement>
 
+### Controller-Answer Context
+
+This subsection captures context that a runtime controller may need to answer
+subagent questions during execution without re-escalating to the user. Each entry
+SHOULD describe a likely subagent question and the answer that the controller
+can provide from spec context.
+
+- <Likely subagent question> → <Answer grounded in proposal/design/spec sources>
+- <Likely subagent question> → <Answer grounded in proposal/design/spec sources>
+
 ## Load-Bearing Preservation Notes
 
 - <Source claim> → <where it landed>
@@ -1002,6 +1023,14 @@ Rules:
 - Include rollback/migration when behavior, data, deployment, or public contract
   changes.
 - Keep `Execution Handoff Notes` limited to evidence for downstream planning; do not include DAG runtime fields, node definitions, model routing, workspace strategy, completion gates, or JSON DAG output.
+- **Populate Controller-Answer Context** with concrete question/answer pairs that
+  downstream planning and runtime stages are likely to encounter. A well-populated
+  section lets the controller answer subagent questions from spec context alone,
+  reserving human escalation for genuinely new or unresolved decisions.
+- **Preserve assumptions, non-goals, success criteria, and open questions** as
+  first-class sections that downstream planning can consume without re-reading
+  the full proposal. Every `[ASSUMPTION]` SHOULD include enough rationale for a
+  downstream agent to evaluate whether the assumption still holds.
 
 ### 12. Write `tasks.md`
 
@@ -1140,6 +1169,16 @@ For each load-bearing claim, ensure it landed in one of:
 - `tasks.md` for implementation/verification work;
 - `specs/**/spec.md` for normative behavior and scenarios;
 - `Open Questions` when unresolved.
+
+**Preservation targets for downstream planning and runtime triage:**
+
+| Element | Required preservation location | Why downstream needs it |
+|---------|-------------------------------|------------------------|
+| Assumptions | `proposal.md#Assumptions`, `design.md#Decisions` or `design.md#Spec Kernel` | Downstream planning applies `[ASSUMPTION]`-tagged items as default behavior; runtime triage re-evaluates them when context changes. |
+| Non-goals | `proposal.md#Non-Goals`, `design.md#Non-Goals`, `design.md#Execution Handoff Notes#Non-Goals for Execution` | DAG decomposition uses non-goals to bound node scope; runtime controller rejects out-of-scope subagent proposals. |
+| Success criteria | `proposal.md#Success Signal`, `specs/**/spec.md` scenarios | Downstream verification nodes prove completion; runtime controller evaluates gate conditions. |
+| Open questions | `proposal.md#Open Questions`, `design.md#Execution Handoff Notes#Open Questions Affecting Execution` | DAG planning inserts decision nodes or human-confirmation gates; runtime controller escalates unresolved questions. |
+| Controller-answer context | `design.md#Execution Handoff Notes#Controller-Answer Context` | Runtime controller answers subagent questions without re-escalating to the user. |
 
 Wrapper-only content, rhetoric, duplicate prose, and process metadata can be
 dropped, but record important drops in `design.md` preservation notes when the
@@ -1322,6 +1361,16 @@ otherwise record assumptions/open questions.
 - API/event/data change: contract and compatibility are explicit.
 - Regulatory/security change: traceability and risk are explicit.
 - UX/user-visible change: user journey and acceptance behavior are explicit.
+
+#### Runtime triage readiness
+
+- Are assumptions explicit enough for a downstream agent to evaluate whether they still hold during execution?
+- Are non-goals stated clearly enough for a runtime controller to reject out-of-scope subagent proposals?
+- Are success criteria observable and evaluable by a downstream verification node?
+- Are open questions identified with enough context for a DAG planner to insert a decision node or human-confirmation gate?
+- Does `design.md` contain a Controller-Answer Context subsection with concrete question/answer pairs?
+- Can a runtime controller answer likely subagent questions from spec context alone, without re-escalating to the user?
+- If the spec were handed to a runtime controller today, would any subagent question be unanswerable with available context?
 
 #### Preservation
 

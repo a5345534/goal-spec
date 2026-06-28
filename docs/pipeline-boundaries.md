@@ -88,4 +88,35 @@ When execution planning context is useful, `goal-spec` may include execution-pla
 - open questions that should become a downstream blocker, decision node, or human-confirmation gate;
 - non-goals that downstream execution must not implement.
 
-This section must remain evidence for downstream planning only. It must not contain DAG runtime fields such as `after`, `modelScenario`, `workspaceStrategy`, `completionGates`, node definitions, model routing, or JSON DAG output.
+## Controller-answer context
+
+In addition to execution-planning evidence, `goal-spec` SHOULD include
+**controller-answer context** in `design.md#Execution Handoff Notes#Controller-Answer Context`.
+Controller-answer context captures likely subagent questions and the answers the
+runtime controller can provide from spec context alone. This lets the controller
+resolve subagent questions during execution without re-escalating to the user.
+
+Each entry SHOULD be a concrete question/answer pair:
+
+```markdown
+### Controller-Answer Context
+
+- <Likely subagent question> → <Answer grounded in proposal/design/spec sources>
+```
+
+Controller-answer context is evidence for downstream runtime triage only. It must
+not contain DAG runtime fields such as `after`, `modelScenario`, `workspaceStrategy`,
+`completionGates`, node definitions, model routing, or JSON DAG output.
+
+## Must-not summary
+
+`goal-spec` must not:
+
+- produce Goal DAG JSON;
+- produce `GoalDagSpec`;
+- produce `.dag.json`;
+- call `/goal`;
+- execute implementation tasks;
+- decide runtime scheduling, model routing, worktree allocation, subagent execution, concrete model binding, or runtime validation;
+- treat `change-explainer.html` as an authoritative source;
+- treat `.goal-spec/` workflow state as an OpenSpec source of truth.

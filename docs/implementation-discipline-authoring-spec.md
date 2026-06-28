@@ -58,19 +58,31 @@ The authoring agent should classify uncertainty:
 
 ## Downstream Handoff
 
-When producing proposal/design/tasks/spec artifacts, include enough context for Stage 2 and Stage 3 to avoid direct user interruption:
+When producing proposal/design/tasks/spec artifacts, include enough context for Stage 2 (DAG planning) and Stage 3 (runtime execution) to avoid direct user interruption:
 
 - assumptions and rationale;
 - accepted non-goals;
+- success criteria and how they will be verified;
 - validation expectations;
 - open questions that remain intentionally unresolved;
-- recommended default behavior for minor choices.
+- recommended default behavior for minor choices;
+- **controller-answer context**: likely subagent questions and answers the runtime
+  controller can provide from spec context alone, so Stage 3 can resolve execution
+  questions without re-escalating to the user.
+
+These elements MUST be recorded in the authoritative OpenSpec sources
+(`proposal.md`, `design.md`, `tasks.md`, `specs/**/spec.md`) — not only in
+workflow artifacts or the explainer — because downstream planning and runtime
+stages consume authoritative sources only.
 
 If the change is ready for DAG production, tasks should be decomposable into nodes with clear success criteria and path scope. Implementation tasks should be eligible for the `implementation-discipline` quality profile.
 
 ## Acceptance Criteria
 
 - Approved OpenSpec changes expose material assumptions instead of hiding them.
+- Non-goals are explicit enough to bound DAG node scope and reject out-of-scope execution proposals.
+- Success criteria are observable and evaluable without re-interviewing the user.
 - Tasks are verifiable and bounded enough for DAG decomposition.
 - Downstream subagent questions can usually be answered by the controller from spec context.
 - Human escalation during execution is reserved for genuinely new or unresolved decisions.
+- `design.md` controller-answer context entries map likely subagent questions to grounded answers from proposal/design/spec sources.

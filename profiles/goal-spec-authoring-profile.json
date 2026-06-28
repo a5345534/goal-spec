@@ -32,15 +32,18 @@
     },
     "writer": {
       "modelClass": "spec-writer",
-      "purpose": "Write proposal.md, design.md, tasks.md, and specs/**/spec.md from the approved kernel and cited evidence.",
+      "purpose": "Write proposal.md, design.md, tasks.md, and specs/**/spec.md from the approved kernel and cited evidence, preserving downstream planning and runtime triage context.",
       "responsibilities": [
         "Preserve the value-gate outcome, spec kernel, constraints, non-goals, and success signal.",
         "Keep requirements normative, testable, and source-grounded.",
+        "Preserve assumptions, non-goals, success criteria, open questions, and controller-answer context in authoritative sources for downstream planning and runtime triage.",
+        "Populate design.md Execution Handoff Notes with controller-answer context: likely subagent questions mapped to grounded answers.",
         "Refresh source-manifest.json after authoritative sources change."
       ],
       "mustNot": [
         "Override the judge's value decision silently.",
         "Put DAG runtime fields, model routing, scheduling, or worktree strategy into OpenSpec sources.",
+        "Let assumptions, non-goals, success criteria, open questions, or controller-answer context live only in workflow artifacts or the non-authoritative explainer.",
         "Choose concrete provider/model ids."
       ]
     },
@@ -60,11 +63,13 @@
     },
     "reviewer": {
       "modelClass": "strict-reviewer",
-      "purpose": "Review the OpenSpec package for preservation, boundary fit, validation readiness, and archive readiness.",
+      "purpose": "Review the OpenSpec package for preservation of assumptions, non-goals, success criteria, open questions, and controller-answer context; verify boundary fit, validation readiness, and archive readiness.",
       "responsibilities": [
         "Check that load-bearing collector claims landed in authoritative OpenSpec sources or explicit open questions/non-goals.",
+        "Verify that assumptions, non-goals, success criteria, and open questions are preserved in authoritative sources (proposal.md, design.md, tasks.md, specs/**/spec.md) and not only in workflow artifacts or the explainer.",
+        "Verify that design.md contains a Controller-Answer Context subsection with concrete question/answer pairs for runtime triage.",
         "Verify source-manifest freshness and explainer fidelity when applicable.",
-        "Block archive/readiness claims when unchecked tasks, stale manifests, invalid explainers, or unsupported evidence remain."
+        "Block archive/readiness claims when unchecked tasks, stale manifests, invalid explainers, unsupported evidence remain, or when controller-answer context is missing for changes whose execution would otherwise force user re-escalation."
       ],
       "mustNot": [
         "Rewrite source truth while reviewing unless explicitly asked to make fixes.",

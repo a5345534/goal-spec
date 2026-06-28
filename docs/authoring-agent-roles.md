@@ -10,9 +10,9 @@ the human-facing contract.
 | --- | --- | --- |
 | `collector` | `evidence-collector` | Gather and cite source truth without judging value or writing final prose. |
 | `judge` | `value-judge` | Decide the value gate, challenge no-build/smaller-scope options, and require assumptions to be explicit. |
-| `writer` | `spec-writer` | Write authoritative OpenSpec sources from the approved kernel and collected evidence. |
+| `writer` | `spec-writer` | Write authoritative OpenSpec sources from the approved kernel and collected evidence, preserving assumptions, non-goals, success criteria, open questions, and controller-answer context for downstream planning and runtime triage. |
 | `explainer` | `explainer-writer` | Generate non-authoritative `change-explainer.html` from authoritative sources. |
-| `reviewer` | `strict-reviewer` | Review preservation, boundary fit, manifest/explainer freshness, and archive readiness. |
+| `reviewer` | `strict-reviewer` | Review preservation of assumptions, non-goals, success criteria, open questions, and controller-answer context; verify boundary fit, manifest/explainer freshness, and archive readiness. |
 
 The profile intentionally contains only abstract `modelClass` values. Concrete
 provider/model ids such as provider-specific model names are not authoring-role
@@ -29,7 +29,12 @@ truth and must not appear in the profile. Runtime resolution belongs to
   Markdown/spec sources remain authoritative.
 - `reviewer` performs the final gate after writer/explainer work and blocks on
   unpreserved claims, stale manifests, invalid explainers, unsupported evidence,
-  or unchecked archive-blocking tasks.
+  unchecked archive-blocking tasks, or missing controller-answer context that
+  would force downstream user re-escalation.
+- `writer` MUST preserve assumptions, non-goals, success criteria, open questions,
+  and controller-answer context in the authoritative OpenSpec sources. These
+  elements MUST NOT live only in workflow artifacts or the non-authoritative
+  explainer.
 
 ## Source-truth rules
 
