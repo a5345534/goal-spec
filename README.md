@@ -124,6 +124,45 @@ Expected output is an OpenSpec change under:
 openspec/changes/<change-name>/
 ```
 
+## Response Lint
+
+`goal-spec` includes a `lint-response` command that validates natural-language
+agent responses against stage-specific routing rules. It ensures agents follow
+the one-question discipline, bounded options format, and content boundaries
+required at each stage.
+
+Available stages:
+
+| Stage | When to use | What it enforces |
+|-------|------------|------------------|
+| `pre-confirmation` | Stage 1.5 Framing-Only Output | No recommendations, `Not doing yet` section, no premature PMA/Spec Kernel/OpenSpec writing |
+| `scope-selected` | Stage 1.7 Scope Confirmation | Three valid decisions, numbered choices, rejects Stage 5 tokens |
+| `invalid-decision` | Invalid Stage 5 approval at 1.7 | Rejection language + valid 1.7 choices |
+| `digest-check` | Missing input digests | Blocking/failing language on freshness |
+| `grilling` | Value challenge / critical collaborator phase | Exactly one question, recommended answer, bounded options, `Not doing yet`, no premature content |
+
+Example — lint a grilling-phase response:
+
+```bash
+<script-dir>/scripts/goal-spec-workflow lint-response --stage grilling --response-text "
+I have reviewed your proposal. My recommended answer is to start with scope A (filters only)
+because it keeps the first slice minimal and verifiable.
+
+Blocking clarification:
+Should we include bulk actions in the initial scope, or defer them to a follow-up?
+
+Options:
+A. Include bulk actions now — broader first slice, longer delivery.
+B. Defer bulk actions — narrower scope, faster verification.
+
+Not doing yet:
+- no Proposal Meaning Analysis
+- no Spec Kernel or OpenSpec writing
+" --project-root ./
+```
+
+The linter returns exit 0 (pass) or exit 20 (blocked) with a JSON report.
+
 ## Value-gated workflow helper (new)
 
 `goal-spec` now uses a structured pre-spec workflow before starting OpenSpec
@@ -140,7 +179,7 @@ Use this helper when:
   `tasks.md` scaffolding.
 - You must decide whether to continue with acknowledged assumptions.
 
-For simple “validation-only” or “explainer-only” modes, you can skip these helper
+For simple "validation-only" or "explainer-only" modes, you can skip these helper
 `init/gate/write-spec` steps and run the OpenSpec validation wrappers directly.
 
 ## Bundled helpers

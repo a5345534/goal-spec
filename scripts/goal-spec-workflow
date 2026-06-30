@@ -2749,6 +2749,90 @@ def cmd_lint_response(args):
             if not re.search(rf"(?:\[{n}\]|\b{n}[.)])", response):
                 missing_required.append(f"numbered choice: {n}")
 
+    # ── grilling (value challenge / constructive disagreement) checks ──
+    elif stage == "grilling":
+        detected_stage = "grilling"
+        has_not_doing_yet = bool(re.search(r'(?i)not doing yet', response))
+
+        # 1. Exactly one Question
+        # Count distinct interrogative sentences (lines with question marks)
+        # Exclude section headers like "Blocking clarification:" — they introduce but aren't the question
+        # Find all lines that contain a question mark
+        question_lines = re.findall(r'(?im)^\s*[^\n]*\?[^\n]*$', response)
+        # Also count inline questions within a sentence that aren't at end-of-line
+        inline_questions = re.findall(r'(?i)[?]', response)
+        if len(inline_questions) > 0 and len(question_lines) == 0:
+            # Question mark found but not at end of a line (inline within paragraph)
+            num_inline = len(inline_questions)
+            if num_inline == 1:
+                total_questions = 1
+            else:
+                total_questions = num_inline
+        else:
+            total_questions = len(question_lines)
+
+        if total_questions == 0:
+            missing_required.append("question (no question found — grilling response must include exactly one question")
+        elif total_questions > 1:
+            forbidden.append(f"multiple questions ({total_questions} found — grilling response must include exactly one question")
+
+        # 2. My recommended answer or localized equivalent
+        recommended_patterns = [
+            r'(?i)my recommended answer',
+            r'(?i)my recommendation',
+            r'(?i)I recommend',
+            r'(?i)recommended path',
+            r'(?i)recommended answer',
+            r'(?i)suggested approach',
+            r'(?i)my suggestion',
+        ]
+        found_recommended = any(re.search(p, response) for p in recommended_patterns)
+        if not found_recommended:
+            missing_required.append("My recommended answer or localized equivalent")
+
+        # 3. Bounded options
+        bounded_option_patterns = [
+            # Options: A / B style
+            r'(?i)\boptions?:?\s+A\s*/\s*B',
+            r'(?i)\boptions?:?\s+A[.)]',
+            r'(?i)\boptions?:?\s+\d[.)]',
+            # A. ... B. ... style
+            r'(?im)^\s*(?:A[.)]|B[.)]|1[.)]|2[.)])\s+.*(?:\n\s*(?:A[.)]|B[.)]|1[.)]|2[.)])\s+.*)*',
+        ]
+        found_options = any(re.search(p, response) for p in bounded_option_patterns)
+        if not found_options:
+            missing_required.append("bounded options (e.g., 'Options: A / B' or 'A. ... B. ...')")
+
+        # 4. Not doing yet section
+        has_not_doing_yet = bool(re.search(r'(?i)not doing yet', response))
+        if not has_not_doing_yet:
+            missing_required.append("Not doing yet section")
+
+        # 5. No premature content: PMA, Spec Kernel, OpenSpec writing
+        # Allow these terms only when on a line that is a negative reference
+        # (e.g., "- no PMA", "no Spec Kernel writing", "not doing yet" section)
+        lines = response.split('\n')
+        premature_terms = [
+            (r'(?i)\bproposal meaning analysis\b', 'Proposal Meaning Analysis'),
+            (r'(?i)\bspec kernel\b', 'Spec Kernel'),
+            (r'(?i)\bopenspec writing\b', 'OpenSpec writing'),
+            (r'(?i)\bopenspec (?:package|scaffold)\b', 'OpenSpec scaffolding'),
+        ]
+        for pat, label in premature_terms:
+            for line in lines:
+                if re.search(pat, line):
+                    stripped = line.strip().lower()
+                    # Check if this line is a negative reference (starts with - no, no, not, or part of not doing yet section)
+                    is_negative_line = bool(re.search(r'(?i)^\s*(?:[-*+]\s+)?(?:no|not|without)\b', stripped))
+                    if not is_negative_line:
+                        forbidden.append(f"premature content: {label}")
+                        # Only flag once per label
+                        break
+
+        # Allow constructive disagreement / value challenge references (these ARE the grilling phase)
+        # Do NOT flag "value challenge", "no-build", "smaller-scope" here since they are
+        # legitimate content for the grilling/value-challenge phase.
+
     # ── digest-check ──
     elif stage == "digest-check":
         detected_stage = "digest-check"
@@ -3447,7 +3531,7 @@ def build_parser() -> argparse.ArgumentParser:
     lint_resp = subparsers.add_parser("lint-response", parents=[common], help="lint a natural-language response against stage-specific routing rules")
     lint_resp.add_argument("--response-text", help="plain-text response to lint")
     lint_resp.add_argument("--response-file", help="read response from file instead of --response-text")
-    lint_resp.add_argument("--stage", required=True, choices=("pre-confirmation","scope-selected","invalid-decision","digest-check"), help="stage context for lint rules")
+    lint_resp.add_argument("--stage", required=True, choices=("pre-confirmation","scope-selected","invalid-decision","digest-check","grilling"), help="stage context for lint rules")
     lint_resp.set_defaults(func=cmd_lint_response)
 
     return parser

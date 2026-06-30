@@ -65,10 +65,45 @@ Stage 1 artifacts must not contain runtime-owned outputs (DAG, trace, worktree,
 runtime model binding, concrete model IDs). Allowed references are abstract
 `modelClass` values only.
 
+## Response Lint
+
+The `scripts/goal-spec-workflow lint-response` command validates natural-language agent
+responses against stage-specific routing rules. This prevents premature content (e.g.,
+Spec Kernel before scope confirmation) and enforces structured output discipline.
+
+Available stages:
+
+| Stage | Context | Enforces |
+|-------|---------|----------|
+| `pre-confirmation` | Stage 1.5 Framing-Only Output | No recommendations, `Not doing yet` section, no PMA/Spec Kernel/OpenSpec writing |
+| `scope-selected` | Stage 1.7 Scope Confirmation Response | Three valid decisions, numbered choices, rejects Stage 5 tokens |
+| `invalid-decision` | Invalid Stage 5 approval at Stage 1.7 | Rejection language + valid 1.7 choices |
+| `digest-check` | Missing input digests | Blocking/failing language on freshness check |
+| `grilling` | Critical collaborator / value challenge phase | Exactly one question, recommended answer, bounded options, `Not doing yet`, no premature PMA/Spec Kernel/OpenSpec |
+
+The `grilling` stage is used after scope confirmation (`confirm_scope_for_analysis`)
+when the agent is in constructive disagreement or value challenge mode. It ensures
+the response contains exactly one focused question, a recommended answer (or localized
+equivalent), bounded options for the user to choose from, a `Not doing yet` section,
+and no premature content from later analysis stages.
+
+Usage:
+
+```bash
+# Lint a grilling phase response from a file
+<script-dir>/scripts/goal-spec-workflow lint-response --stage grilling --response-file response.txt --project-root <target>
+
+# Lint inline text
+<script-dir>/scripts/goal-spec-workflow lint-response --stage grilling --response-text "<response>" --project-root <target>
+```
+
+Exit codes: `0` pass, `20` blocked (forbidden phrases or missing required sections).
+
 ## Scripts
 
 The `scripts/goal-spec-workflow` helper provides deterministic commands for
-intake, validation, gate evaluation, freshness checks, and boundary checks.
+intake, validation, gate evaluation, freshness checks, boundary checks, and
+response linting.
 
 The deterministic scripts validate and transition only; they do not author
 semantic artifacts.

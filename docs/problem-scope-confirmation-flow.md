@@ -103,6 +103,34 @@ Allowed decisions:
 (see SKILL.md) MUST be used — summarize selected scope and list exactly the
 three valid choices.
 
+## Grilling (Value Challenge / Critical Collaborator) Responses
+
+After scope confirmation (`confirm_scope_for_analysis`), the agent enters the
+critical collaborator / value challenge phase. Responses during this phase
+MUST follow the one-question discipline enforced by the `grilling` lint stage:
+
+- **Exactly one question** — a single focused question that resolves the
+  highest-impact blocker. Multiple questions are rejected by the linter.
+- **My recommended answer or localized equivalent** — the agent provides a
+  concrete recommendation or suggested approach.
+- **Bounded options** — the question presents the user with specific, limited
+  choices (e.g., "A / B" or numbered options).
+- **Not doing yet section** — explicitly lists what is NOT being addressed
+  in this response (no PMA, no Spec Kernel, no OpenSpec writing).
+- **No premature content** — the response must not contain Proposal Meaning
+  Analysis, Spec Kernel, OpenSpec writing, or OpenSpec scaffolding as
+  substantive content. These terms are allowed only in the "Not doing yet"
+  section as negative references.
+
+Use the `lint-response` command with `--stage grilling` to validate responses:
+
+```bash
+<script-dir>/scripts/goal-spec-workflow lint-response --stage grilling --response-text "<response>" --project-root <target>
+```
+
+The linter returns exit 0 (pass) or exit 20 (blocked) with a JSON report
+identifying forbidden phrases or missing required sections.
+
 ## Key Rules
 
 - **Scope closure before value judgment**: Proposal Meaning Analysis SHALL NOT

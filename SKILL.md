@@ -249,6 +249,22 @@ ships these helper entrypoints and they use only Python's standard library:
 <skill-dir>/scripts/openspec-validate-source-manifest <change-name> --project-root <project-root>
 <skill-dir>/scripts/openspec-validate-explainer <change-name> --project-root <project-root> --require-decision-review
 <skill-dir>/scripts/openspec-archive-preflight <change-name> --project-root <project-root> --require-decision-review
+
+Response lint — validate agent responses against stage-specific routing rules:
+
+```bash
+<skill-dir>/scripts/goal-spec-workflow lint-response --stage pre-confirmation --response-text "<response>" --project-root <project-root>
+<skill-dir>/scripts/goal-spec-workflow lint-response --stage scope-selected --response-text "<response>" --project-root <project-root>
+<skill-dir>/scripts/goal-spec-workflow lint-response --stage invalid-decision --response-text "<response>" --project-root <project-root>
+<skill-dir>/scripts/goal-spec-workflow lint-response --stage digest-check --response-text "<response>" --project-root <project-root>
+<skill-dir>/scripts/goal-spec-workflow lint-response --stage grilling --response-text "<response>" --project-root <project-root>
+<skill-dir>/scripts/goal-spec-workflow lint-response --stage grilling --response-file <response-file> --project-root <project-root>
+```
+
+The `grilling` stage enforces exactly one question, a recommended answer,
+bounded options, a `Not doing yet` section, and no premature Proposal Meaning
+Analysis / Spec Kernel / OpenSpec writing content.
+
 ```
 
 Compatibility wrapper for projects or agents expecting the historical script

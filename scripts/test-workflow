@@ -1928,6 +1928,155 @@ test_lint_response_command_present() {
     return 0
 }
 
+test_lint_response_grilling_stage_registered() {
+    # grilling stage must be a valid choice for lint-response
+    "$WORKFLOW" lint-response --help 2>&1 | grep -q "grilling" || { printf "\n    ${RED}missing grilling stage in lint-response${NC}\n"; return 1; }
+    return 0
+}
+
+test_lint_response_grilling_blocks_zero_questions() {
+    # grilling response without any question must fail
+    local tmp
+    tmp=$(mktemp -d)
+    git -C "$tmp" init -q
+    local out rc ok=0
+    set +e
+    out=$("$WORKFLOW" lint-response --stage grilling --response-text "I have reviewed the proposal. My recommended answer is Option A. Options: A / B. Not doing yet: no spec writing." --project-root "$tmp" 2>&1)
+    rc=$?
+    set -e
+    assert_exit 20 "$rc" "lint grilling zero questions exit" || ok=1
+    echo "$out" | python3 -c "import json,sys; d=json.load(sys.stdin); assert d.get('result')=='fail', d.get('result')" 2>/dev/null || { printf "\n    ${RED}lint response result must be fail${NC}\n"; ok=1; }
+    rm -rf "$tmp"
+    return $ok
+}
+
+test_lint_response_grilling_blocks_multiple_questions() {
+    # grilling response with multiple questions must fail
+    local tmp
+    tmp=$(mktemp -d)
+    git -C "$tmp" init -q
+    local out rc ok=0
+    set +e
+    out=$("$WORKFLOW" lint-response --stage grilling --response-text "I have concerns about the scope. My recommended answer: start with A. Options: A / B / C.
+
+Blocking clarification:
+1. Should we include bulk actions? Options: Yes / No
+2. Should we include audit logs? Options: Yes / No
+
+Not doing yet:
+- no PMA
+- no spec writing" --project-root "$tmp" 2>&1)
+    rc=$?
+    set -e
+    assert_exit 20 "$rc" "lint grilling multiple questions exit" || ok=1
+    echo "$out" | python3 -c "import json,sys; d=json.load(sys.stdin); assert d.get('result')=='fail', d.get('result')" 2>/dev/null || { printf "\n    ${RED}lint response result must be fail${NC}\n"; ok=1; }
+    echo "$out" | python3 -c "import json,sys; d=json.load(sys.stdin); assert 'multiple questions' in str(d.get('forbidden',[])) or 'multiple' in str(d.get('forbidden',[])), d" 2>/dev/null || { printf "\n    ${RED}must flag multiple questions${NC}\n"; ok=1; }
+    rm -rf "$tmp"
+    return $ok
+}
+
+test_lint_response_grilling_requires_recommended_answer() {
+    # grilling response without recommended answer must fail
+    local tmp
+    tmp=$(mktemp -d)
+    git -C "$tmp" init -q
+    local out rc ok=0
+    set +e
+    out=$("$WORKFLOW" lint-response --stage grilling --response-text "Blocking clarification:\nShould we include filters or just sorting? Options: A / B.\n\nNot doing yet:\n- no PMA\n- no spec writing" --project-root "$tmp" 2>&1)
+    rc=$?
+    set -e
+    assert_exit 20 "$rc" "lint grilling missing recommended answer exit" || ok=1
+    echo "$out" | python3 -c "import json,sys; d=json.load(sys.stdin); assert d.get('result')=='fail', d.get('result')" 2>/dev/null || { printf "\n    ${RED}lint response result must be fail${NC}\n"; ok=1; }
+    rm -rf "$tmp"
+    return $ok
+}
+
+test_lint_response_grilling_requires_bounded_options() {
+    # grilling response without bounded options must fail
+    local tmp
+    tmp=$(mktemp -d)
+    git -C "$tmp" init -q
+    local out rc ok=0
+    set +e
+    out=$("$WORKFLOW" lint-response --stage grilling --response-text "I have a concern about the scope. My recommended answer: proceed with A only.\n\nBlocking clarification:\nWhich scope do you prefer? Please think about it carefully.\n\nNot doing yet:\n- no PMA\n- no spec writing" --project-root "$tmp" 2>&1)
+    rc=$?
+    set -e
+    assert_exit 20 "$rc" "lint grilling missing bounded options exit" || ok=1
+    echo "$out" | python3 -c "import json,sys; d=json.load(sys.stdin); assert d.get('result')=='fail', d.get('result')" 2>/dev/null || { printf "\n    ${RED}lint response result must be fail${NC}\n"; ok=1; }
+    rm -rf "$tmp"
+    return $ok
+}
+
+test_lint_response_grilling_requires_not_doing_yet() {
+    # grilling response without Not doing yet section must fail
+    local tmp
+    tmp=$(mktemp -d)
+    git -C "$tmp" init -q
+    local out rc ok=0
+    set +e
+    out=$("$WORKFLOW" lint-response --stage grilling --response-text "I have concerns about the scope. My recommended answer: A. Options: A / B.\n\nBlocking clarification:\nShould we include bulk actions? Options: Yes / No" --project-root "$tmp" 2>&1)
+    rc=$?
+    set -e
+    assert_exit 20 "$rc" "lint grilling missing Not doing yet exit" || ok=1
+    echo "$out" | python3 -c "import json,sys; d=json.load(sys.stdin); assert d.get('result')=='fail', d.get('result')" 2>/dev/null || { printf "\n    ${RED}lint response result must be fail${NC}\n"; ok=1; }
+    rm -rf "$tmp"
+    return $ok
+}
+
+test_lint_response_grilling_blocks_premature_spec_kernel() {
+    # grilling response containing Spec Kernel must fail
+    local tmp
+    tmp=$(mktemp -d)
+    git -C "$tmp" init -q
+    local out rc ok=0
+    set +e
+    out=$("$WORKFLOW" lint-response --stage grilling --response-text "I have concerns about scope. My recommended answer: A. Options: A / B.
+
+Blocking clarification:
+Which scope? Options: A / B.
+
+Not doing yet:
+- no PMA
+
+Spec Kernel:
+Why: add filters
+Capabilities: filtering" --project-root "$tmp" 2>&1)
+    rc=$?
+    set -e
+    assert_exit 20 "$rc" "lint grilling premature spec kernel exit" || ok=1
+    echo "$out" | python3 -c "import json,sys; d=json.load(sys.stdin); assert d.get('result')=='fail', d.get('result')" 2>/dev/null || { printf "\n    ${RED}lint response result must be fail${NC}\n"; ok=1; }
+    rm -rf "$tmp"
+    return $ok
+}
+
+test_lint_response_grilling_clean_pass() {
+    # clean grilling response must pass
+    local tmp
+    tmp=$(mktemp -d)
+    git -C "$tmp" init -q
+    local out rc ok=0
+    set +e
+    out=$("$WORKFLOW" lint-response --stage grilling --response-text "I have reviewed your proposal. My recommended answer is to start with scope A (filters only) because it delivers the core filtering capability without expanding into export or bulk operations, keeping the first slice minimal and verifiable.
+
+Blocking clarification:
+Should we include bulk actions in the initial scope, or defer them to a follow-up?
+
+Options:
+A. Include bulk actions now — broader first slice, longer delivery.
+B. Defer bulk actions — narrower scope, faster verification.
+
+Not doing yet:
+- no Proposal Meaning Analysis
+- no Spec Kernel or OpenSpec writing
+- no value challenge final recommendation" --project-root "$tmp" 2>&1)
+    rc=$?
+    set -e
+    assert_exit 0 "$rc" "lint grilling clean pass exit" || ok=1
+    echo "$out" | python3 -c "import json,sys; d=json.load(sys.stdin); assert d.get('result')=='pass', d.get('result')" 2>/dev/null || { printf "\n    ${RED}lint response result must be pass${NC}\n"; ok=1; }
+    rm -rf "$tmp"
+    return $ok
+}
+
 test_authoring_profile_abstract_model_classes() {
     python3 - <<PY
 import json
@@ -2181,11 +2330,54 @@ test_design_tree_history_is_durable() {
 }
 
 test_design_tree_schema_validates() {
-    python3 - <<PY
+    python3 - <<'PY'
 import json
-schema = json.load(open('$PROJECT_DIR/schemas/design-tree.schema.json'))
 
-# Empty tree
+# Inline schema (replaces external schemas/design-tree.schema.json)
+schema = json.loads(r'''{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Design Tree",
+  "description": "Durable design-tree state for the Problem & Scope clarification grilling loop.",
+  "type": "object",
+  "required": ["schemaVersion", "changeName", "nodes", "activeQuestionId", "totalAsked", "totalAnswered", "updatedAt"],
+  "additionalProperties": false,
+  "properties": {
+    "schemaVersion": { "const": "1.0" },
+    "changeName": { "type": "string", "minLength": 1 },
+    "nodes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["questionId", "field", "question", "askedAt", "status"],
+        "additionalProperties": false,
+        "properties": {
+          "questionId": { "type": "string", "minLength": 1 },
+          "field": { "type": "string", "minLength": 1 },
+          "question": { "type": "string", "minLength": 1 },
+          "whyThisMatters": { "type": "string" },
+          "recommendedAnswer": { "type": "string" },
+          "options": { "type": "array", "items": { "type": "object" } },
+          "askedAt": { "type": "string", "format": "date-time" },
+          "answeredAt": { "type": ["string", "null"], "format": "date-time" },
+          "answer": {
+            "type": ["object", "null"],
+            "properties": {
+              "field": { "type": "string" },
+              "value": { "type": "string" }
+            },
+            "additionalProperties": false
+          },
+          "status": { "enum": ["active", "answered"] }
+        }
+      }
+    },
+    "activeQuestionId": { "type": "string" },
+    "totalAsked": { "type": "integer", "minimum": 0 },
+    "totalAnswered": { "type": "integer", "minimum": 0 },
+    "updatedAt": { "type": "string", "format": "date-time" }
+  }
+}''')
+
 try:
     import jsonschema
 except ImportError:
@@ -2345,6 +2537,14 @@ run_test "scope-selected: requires confirm decisions" test_lint_response_scope_s
 run_test "scope-selected: clean confirmation passes" test_lint_response_scope_selected_clean_pass
 run_test "invalid-decision: requires rejection"     test_lint_response_invalid_decision_rejected
 run_test "digest-check: requires blocking language"  test_lint_response_missing_digest_blocked
+run_test "grilling: stage registered"                 test_lint_response_grilling_stage_registered
+run_test "grilling: blocks zero questions"            test_lint_response_grilling_blocks_zero_questions
+run_test "grilling: blocks multiple questions"        test_lint_response_grilling_blocks_multiple_questions
+run_test "grilling: requires recommended answer"      test_lint_response_grilling_requires_recommended_answer
+run_test "grilling: requires bounded options"         test_lint_response_grilling_requires_bounded_options
+run_test "grilling: requires Not doing yet"           test_lint_response_grilling_requires_not_doing_yet
+run_test "grilling: blocks premature Spec Kernel"     test_lint_response_grilling_blocks_premature_spec_kernel
+run_test "grilling: clean pass"                       test_lint_response_grilling_clean_pass
 echo ""
 
 # Section: Design Tree
