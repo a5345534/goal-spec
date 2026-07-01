@@ -44,6 +44,7 @@
     "scripts/openspec-archive-preflight",
     "scripts/openspec-build-source-manifest",
     "scripts/openspec-propose",
+    "scripts/openspec-publish-closeout",
     "scripts/openspec-validate-explainer",
     "scripts/openspec-validate-source-manifest",
     "schemas/source-manifest.schema.json",

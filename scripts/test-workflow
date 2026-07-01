@@ -2542,6 +2542,68 @@ print("All design tree schema validations pass")
 PY
 }
 
+# --- publish-closeout test functions ---
+
+PUBLISH_CLOSEOUT="$SCRIPT_DIR/openspec-publish-closeout"
+
+test_publish_closeout_blocks_missing_change_dir() {
+    local tmp
+    tmp=$(mktemp -d)
+    local out rc
+    set +e
+    out=$("$PUBLISH_CLOSEOUT" "nonexistent-change" --project-root "$tmp" --json 2>&1)
+    rc=$?
+    set -e
+    local ok=0
+    assert_exit 1 "$rc" "publish-closeout missing change dir exit" || ok=1
+    assert_json_field "$out" "mode" "blocked" "mode" || ok=1
+    rm -rf "$tmp"
+    return $ok
+}
+
+test_publish_closeout_non_published() {
+    local tmp
+    tmp=$(mktemp -d)
+    local out rc change_dir
+
+    # Scaffold a real change to get valid artifacts
+    "$SCRIPT_DIR/openspec-propose" "publish-test" --project-root "$tmp" --capability "test-cap" --force --no-manifest 2>&1 > /dev/null
+    "$SCRIPT_DIR/openspec-build-source-manifest" "publish-test" --project-root "$tmp" 2>&1 > /dev/null
+
+    # Create a valid change-explainer.html since propose doesn't create one
+    change_dir="$tmp/openspec/changes/publish-test"
+    cat > "$change_dir/change-explainer.html" << 'HEOF'
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>測試</title>
+</head>
+<body>
+<section id="why"><h2>Why</h2><p>這個測試解釋了為什麼需要這個變更。</p></section>
+<section id="what-changes"><h2>What Changes</h2><p>這個變更會修改哪些部分。</p></section>
+<section id="before-after"><h2>Before/After</h2><p>變更前後的比較說明。</p></section>
+<section id="flow"><h2>Flow</h2><p>執行流程說明概述。</p></section>
+<section id="affected-surfaces"><h2>Affected Surfaces</h2><p>受影響範圍分析。</p></section>
+<section id="scope-boundaries"><h2>Scope Boundaries</h2><p>範圍邊界清晰定義。</p></section>
+<section id="rollout"><h2>Rollout</h2><p>逐步上線計畫。</p></section>
+<section id="current-status"><h2>Current Status</h2><p>目前狀態說明。</p></section>
+</body>
+</html>
+HEOF
+
+    set +e
+    out=$("$PUBLISH_CLOSEOUT" "publish-test" --project-root "$tmp" --non-published --skip-browser-layout --json 2>&1)
+    rc=$?
+    set -e
+    local ok=0
+    assert_exit 0 "$rc" "publish-closeout non-published exit" || ok=1
+    assert_json_field "$out" "mode" "non_published" "mode" || ok=1
+    rm -rf "$tmp"
+    return $ok
+}
+
 # --- main ---
 
 echo ""
@@ -2662,6 +2724,12 @@ run_test "scope-closure auto-adds question to design tree" test_design_tree_scop
 run_test "clarification response auto-answers design tree" test_design_tree_clarification_response_auto_answers
 run_test "multiple iteration history is durable"            test_design_tree_history_is_durable
 run_test "design tree schema validates"                        test_design_tree_schema_validates
+echo ""
+
+# Section: Publish Closeout
+# --- publish-closeout ---
+run_test "publish-closeout: blocks on missing change dir"      test_publish_closeout_blocks_missing_change_dir
+run_test "publish-closeout: non-published mode reports ok"      test_publish_closeout_non_published
 echo ""
 
 # --- summary ---

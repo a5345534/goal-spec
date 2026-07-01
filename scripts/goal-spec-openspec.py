@@ -939,6 +939,379 @@ def scaffold_change(policy: Policy, change_name: str, capability: str | None, *,
     return base
 
 
+def publish_closeout(
+    change_name: str,
+    base: Path,
+    policy: Policy,
+    *,
+    remote: str = "origin",
+    branch: str | None = None,
+    commit_message: str | None = None,
+    non_published: bool = False,
+    require_decision_review: bool = False,
+    skip_browser_layout: bool = False,
+) -> dict[str, Any]:
+    """Publish closeout for an OpenSpec change package.
+
+    Validation-first closeout:
+      1. Validate source-manifest.json and required change-explainer.html.
+      2. Compute owned paths under openspec/changes/<change-name>/,
+         excluding .goal-spec/ operational artifacts.
+      3. Stage only owned paths.
+      4. Block on unrelated dirty files or ambiguous owned paths.
+      5. Block on detached HEAD, missing upstream, or missing remote.
+      6. Commit with a generated or provided message.
+      7. Non-force push to the remote branch.
+      8. Verify the remote branch contains the pushed commit.
+      9. Re-check worktree cleanliness.
+     10. Support explicit non-published mode (skip commit/push, report as such).
+
+    Returns a result dict with mode, diagnostics, and optional commitSha.
+    """
+    report: dict[str, Any] = {
+        "changeName": change_name,
+        "changeDir": str(base),
+        "mode": "blocked",
+        "diagnostics": [],
+        "checks": {},
+    }
+
+    if not base.exists():
+        report["diagnostics"].append({
+            "severity": "blocker",
+            "code": "change_directory_not_found",
+            "message": f"Change directory not found: {base}",
+        })
+        return report
+
+    cwd = policy.project_root
+
+    # ------------------------------------------------------------------
+    # 1. Validation-first: validate source-manifest and explainer
+    # ------------------------------------------------------------------
+    manifest = validate_manifest(change_name, base)
+    report["checks"]["sourceManifest"] = {"status": manifest.status, **manifest.data}
+    if manifest.status != "ok":
+        report["diagnostics"].append({
+            "severity": "blocker",
+            "code": "invalid_source_manifest",
+            "message": "source-manifest.json validation failed; cannot publish with invalid manifest",
+        })
+
+    if policy.explainer_required:
+        explainer = validate_explainer(
+            change_name,
+            base,
+            policy,
+            require_decision_review=require_decision_review,
+            skip_browser_layout=skip_browser_layout,
+        )
+        report["checks"]["explainer"] = {"status": explainer.status, **explainer.data}
+        if explainer.status != "ok":
+            report["diagnostics"].append({
+                "severity": "blocker",
+                "code": "invalid_change_explainer",
+                "message": "change-explainer.html validation failed; cannot publish with invalid explainer",
+            })
+
+    # If validation failed, return early with diagnostics
+    if any(d["severity"] == "blocker" for d in report["diagnostics"]):
+        return report
+
+    # ------------------------------------------------------------------
+    # 2. Non-published mode: skip all git operations
+    # ------------------------------------------------------------------
+    if non_published:
+        report["mode"] = "non_published"
+        report["diagnostics"].append({
+            "severity": "info",
+            "code": "non_published_mode",
+            "message": "Non-published mode: skipping commit and push. Closeout result labeled as non-published.",
+        })
+        return report
+
+    # ------------------------------------------------------------------
+    # 3. Compute owned paths
+    # ------------------------------------------------------------------
+    # Owned paths are everything under openspec/changes/<change-name>/
+    # except .goal-spec/ operational artifacts. Also include source-manifest.json
+    # and change-explainer.html at the change root.
+    owned_relative = f"openspec/changes/{change_name}"
+    owned_path_str = owned_relative.replace("/", os.sep)
+
+    # ------------------------------------------------------------------
+    # 4-5. Git status and staging
+    # ------------------------------------------------------------------
+    try:
+        # Check for detached HEAD
+        result = subprocess.run(
+            ["git", "symbolic-ref", "-q", "HEAD"],
+            capture_output=True, text=True, cwd=cwd, timeout=15,
+        )
+        if result.returncode != 0:
+            report["diagnostics"].append({
+                "severity": "blocker",
+                "code": "detached_head",
+                "message": "Git HEAD is detached; cannot publish from detached state. Switch to a branch first.",
+            })
+            return report
+
+        current_branch = result.stdout.strip().removeprefix("refs/heads/")
+        target_branch = branch or current_branch
+
+        # Check for missing upstream
+        result = subprocess.run(
+            ["git", "rev-parse", "--abbrev-ref", "--symbolic-full-name", f"{target_branch}@{{upstream}}"],
+            capture_output=True, text=True, cwd=cwd, timeout=15,
+        )
+        upstream_ref = f"refs/remotes/{remote}/{target_branch}"
+        if result.returncode != 0:
+            report["diagnostics"].append({
+                "severity": "blocker",
+                "code": "missing_upstream",
+                "message": f"Branch '{target_branch}' has no upstream tracking branch on '{remote}'. Set upstream or push manually.",
+            })
+            # Check if remote exists at all
+            result_remote = subprocess.run(
+                ["git", "remote", "get-url", remote],
+                capture_output=True, text=True, cwd=cwd, timeout=15,
+            )
+            if result_remote.returncode != 0:
+                report["diagnostics"].append({
+                    "severity": "blocker",
+                    "code": "missing_remote",
+                    "message": f"Remote '{remote}' is not configured.",
+                })
+            return report
+
+        # Check for unrelated dirty files
+        result = subprocess.run(
+            ["git", "status", "--porcelain"],
+            capture_output=True, text=True, cwd=cwd, timeout=15,
+        )
+        porcelain_lines = [line.strip() for line in result.stdout.splitlines() if line.strip()]
+
+        if porcelain_lines:
+            # Classify changes
+            owned_prefix = owned_path_str + os.sep
+            owned_variants = [
+                owned_path_str,                   # openspec/changes/<name>
+                owned_relative.replace("/", os.sep),  # same, differently resolved
+            ]
+
+            unrelated_paths: list[str] = []
+            staging_paths: list[str] = []
+
+            for line in porcelain_lines:
+                # Status format: XY filename or XY filename -> renamed
+                if len(line) < 3:
+                    continue
+                status_code = line[:2].strip()
+                # Handle rename: "R  from -> to" or "R  from -> to"
+                filepath_part = line[3:].strip()
+                if " -> " in filepath_part:
+                    # Rename: status line is like "R  oldpath -> newpath"
+                    parts = filepath_part.split(" -> ")
+                    filepath_part = parts[-1].strip()
+
+                # Normalize path separators
+                normalized_path = filepath_part.replace("/", os.sep)
+
+                # Check if path is owned
+                is_owned = normalized_path.startswith(owned_prefix) or normalized_path.startswith(owned_path_str + os.sep) or normalized_path == owned_path_str
+
+                # Exclude .goal-spec/ paths (operational artifacts)
+                if is_owned:
+                    # Check it's not inside .goal-spec/
+                    if ".goal-spec" in normalized_path.split(os.sep):
+                        continue
+
+                if is_owned:
+                    staging_paths.append(normalized_path)
+                else:
+                    unrelated_paths.append(normalized_path)
+
+            if unrelated_paths:
+                report["diagnostics"].append({
+                    "severity": "blocker",
+                    "code": "unrelated_dirty_files",
+                    "message": f"Unrelated dirty files prevent clean closeout: {unrelated_paths}",
+                })
+                return report
+
+        # Check if there's anything to commit
+        if not porcelain_lines:
+            report["mode"] = "no_changes"
+            report["diagnostics"].append({
+                "severity": "info",
+                "code": "no_changes",
+                "message": "No changes to commit; worktree is clean.",
+            })
+            return report
+
+        # ------------------------------------------------------------------
+        # 5. Stage only owned paths
+        # ------------------------------------------------------------------
+        if staging_paths:
+            subprocess.run(
+                ["git", "add", "--"] + staging_paths,
+                capture_output=True, text=True, cwd=cwd, timeout=15, check=True,
+            )
+
+        # ------------------------------------------------------------------
+        # 6. Create commit
+        # ------------------------------------------------------------------
+        msg = commit_message or f"goal-spec closeout: {change_name}"
+        result = subprocess.run(
+            ["git", "commit", "-m", msg],
+            capture_output=True, text=True, cwd=cwd, timeout=15,
+        )
+        if result.returncode != 0:
+            report["diagnostics"].append({
+                "severity": "blocker",
+                "code": "commit_failed",
+                "message": f"Git commit failed: {result.stderr.strip() or result.stdout.strip()}",
+            })
+            return report
+
+        # Extract commit SHA
+        result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            capture_output=True, text=True, cwd=cwd, timeout=15, check=True,
+        )
+        commit_sha = result.stdout.strip()
+        report["commitSha"] = commit_sha
+
+        # ------------------------------------------------------------------
+        # 7. Non-force push
+        # ------------------------------------------------------------------
+        try:
+            result = subprocess.run(
+                ["git", "push", "--no-force", remote, target_branch],
+                capture_output=True, text=True, cwd=cwd, timeout=60,
+            )
+        except subprocess.TimeoutExpired:
+            report["diagnostics"].append({
+                "severity": "blocker",
+                "code": "push_timeout",
+                "message": f"Git push to {remote}/{target_branch} timed out after 60s.",
+            })
+            return report
+
+        if result.returncode != 0:
+            stderr = result.stderr.strip()
+            # Classify push failure
+            if "rejected" in stderr and "non-fast-forward" in stderr:
+                code = "push_rejected_non_fast_forward"
+                msg_detail = "Push rejected: non-fast-forward update. Remote branch has diverged or contains commits not in local branch."
+            elif "rejected" in stderr:
+                code = "push_rejected"
+                msg_detail = f"Push rejected: {stderr}"
+            elif "Authentication failed" in stderr or "auth" in stderr.lower():
+                code = "auth_failure"
+                msg_detail = f"Authentication failure: {stderr}"
+            elif "Could not resolve" in stderr or "Could not read from remote" in stderr:
+                code = "network_failure"
+                msg_detail = f"Network failure: {stderr}"
+            else:
+                code = "push_failed"
+                msg_detail = f"Git push failed: {stderr or result.stdout.strip()}"
+
+            report["diagnostics"].append({
+                "severity": "blocker",
+                "code": code,
+                "message": msg_detail,
+            })
+            return report
+
+        # ------------------------------------------------------------------
+        # 8. Remote verification
+        # ------------------------------------------------------------------
+        try:
+            result = subprocess.run(
+                ["git", "ls-remote", remote, target_branch],
+                capture_output=True, text=True, cwd=cwd, timeout=30,
+            )
+        except subprocess.TimeoutExpired:
+            report["diagnostics"].append({
+                "severity": "blocker",
+                "code": "remote_verify_timeout",
+                "message": f"Remote verification (ls-remote {remote} {target_branch}) timed out after 30s.",
+            })
+            report["mode"] = "blocked"
+            return report
+
+        if result.returncode != 0:
+            report["diagnostics"].append({
+                "severity": "blocker",
+                "code": "remote_verify_failed",
+                "message": f"Remote verification failed: {result.stderr.strip() or 'ls-remote returned non-zero'}",
+            })
+            report["mode"] = "blocked"
+            return report
+
+        remote_refs = result.stdout.strip().splitlines()
+        remote_contains = any(commit_sha in line for line in remote_refs)
+
+        if not remote_contains:
+            report["diagnostics"].append({
+                "severity": "blocker",
+                "code": "remote_verification_failed",
+                "message": f"Remote does not contain commit {commit_sha} on {target_branch}. The push may have been rejected or the remote has not been updated.",
+            })
+            report["mode"] = "blocked"
+            return report
+
+        # ------------------------------------------------------------------
+        # 9. Re-check worktree cleanliness
+        # ------------------------------------------------------------------
+        result = subprocess.run(
+            ["git", "status", "--porcelain"],
+            capture_output=True, text=True, cwd=cwd, timeout=15,
+        )
+        post_porcelain = [line.strip() for line in result.stdout.splitlines() if line.strip()]
+        if post_porcelain:
+            # Allow .goal-spec/ paths (they are operational artifacts)
+            owned_allowed: list[str] = []
+            truly_dirty: list[str] = []
+            for line in post_porcelain:
+                filepath = line[3:].strip()
+                normalized = filepath.replace("/", os.sep) if filepath else ""
+                if ".goal-spec" in normalized.split(os.sep):
+                    owned_allowed.append(normalized)
+                else:
+                    truly_dirty.append(normalized)
+
+            if truly_dirty:
+                report["diagnostics"].append({
+                    "severity": "warning",
+                    "code": "post_publish_dirty_worktree",
+                    "message": f"Worktree has new dirty files after publish: {truly_dirty}. Expected clean after commit.",
+                })
+
+        report["mode"] = "published"
+        report["diagnostics"].append({
+            "severity": "info",
+            "code": "published",
+            "message": f"OpenSpec change '{change_name}' published to {remote}/{target_branch} at commit {commit_sha}.",
+        })
+
+    except FileNotFoundError:
+        report["diagnostics"].append({
+            "severity": "blocker",
+            "code": "git_not_found",
+            "message": "Git not found. Ensure git is installed and on PATH.",
+        })
+    except subprocess.CalledProcessError as err:
+        report["diagnostics"].append({
+            "severity": "blocker",
+            "code": "git_command_failed",
+            "message": f"Git command failed: {err}",
+        })
+
+    return report
+
+
 def archive_preflight(change_name: str, base: Path, policy: Policy, *, require_decision_review: bool = False, skip_browser_layout: bool = False) -> dict[str, Any]:
     report: dict[str, Any] = {
         "changeName": change_name,
@@ -1069,6 +1442,30 @@ def cmd_validate_explainer(args: argparse.Namespace) -> int:
     return 0 if result.status == "ok" else 1
 
 
+def cmd_publish_closeout(args: argparse.Namespace) -> int:
+    try:
+        root = _project_root(args.project_root)
+        policy = _policy(root, args.policy)
+        base = change_dir(policy, args.change_name)
+        payload = publish_closeout(
+            args.change_name,
+            base,
+            policy,
+            remote=args.remote,
+            branch=args.branch,
+            commit_message=args.commit_message,
+            non_published=args.non_published,
+            require_decision_review=args.require_decision_review,
+            skip_browser_layout=args.skip_browser_layout,
+        )
+    except Exception as err:  # noqa: BLE001
+        payload = {"status": "fail", "error": str(err)}
+        _dump(payload, args.json)
+        return 1
+    _dump(payload, args.json)
+    return 0 if payload.get("mode") in ("published", "no_changes", "non_published") else 1
+
+
 def cmd_archive_preflight(args: argparse.Namespace) -> int:
     try:
         root = _project_root(args.project_root)
@@ -1119,6 +1516,16 @@ def build_parser() -> argparse.ArgumentParser:
     validate.add_argument("--require-decision-review", action="store_true", help="require strict decision-review affordances")
     validate.add_argument("--skip-browser-layout", action="store_true", help="skip Chrome/Chromium layout probe")
     validate.set_defaults(func=cmd_validate_explainer)
+
+    publish = subparsers.add_parser("publish-closeout", parents=[common], help="publish closeout: validate, stage, commit, push, verify")
+    publish.add_argument("change_name")
+    publish.add_argument("--remote", default="origin", help="Git remote name (default: origin)")
+    publish.add_argument("--branch", help="Target branch (default: current branch)")
+    publish.add_argument("--commit-message", help="Commit message (auto-generated if omitted)")
+    publish.add_argument("--non-published", action="store_true", help="Skip commit/push, label result as non-published")
+    publish.add_argument("--require-decision-review", action="store_true", help="require strict decision-review affordances")
+    publish.add_argument("--skip-browser-layout", action="store_true", help="skip Chrome/Chromium layout probe")
+    publish.set_defaults(func=cmd_publish_closeout)
 
     archive = subparsers.add_parser("archive-preflight", parents=[common], help="run archive readiness checks")
     archive.add_argument("change_name")

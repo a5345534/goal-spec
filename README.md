@@ -209,6 +209,9 @@ scripts/openspec-build-source-manifest <change-name> --project-root <target-root
 scripts/openspec-validate-source-manifest <change-name> --project-root <target-root>
 scripts/openspec-validate-explainer <change-name> --project-root <target-root> --require-decision-review
 scripts/openspec-archive-preflight <change-name> --project-root <target-root> --require-decision-review
+
+# Publish closeout — validation-first commit and push to upstream git remote
+scripts/openspec-publish-closeout <change-name> --project-root <target-root> [--remote <remote>] [--branch <branch>] [--commit-message "<msg>"] [--non-published] [--require-decision-review]
 ```
 
 The workflow helper creates workspace-local `.goal-spec/changes/<change-name>/` artifacts, including:

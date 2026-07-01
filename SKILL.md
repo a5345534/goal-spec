@@ -253,6 +253,7 @@ ships these helper entrypoints and they use only Python's standard library:
 <skill-dir>/scripts/openspec-validate-source-manifest <change-name> --project-root <project-root>
 <skill-dir>/scripts/openspec-validate-explainer <change-name> --project-root <project-root> --require-decision-review
 <skill-dir>/scripts/openspec-archive-preflight <change-name> --project-root <project-root> --require-decision-review
+<skill-dir>/scripts/openspec-publish-closeout <change-name> --project-root <project-root> [--remote <remote>] [--branch <branch>] [--commit-message "<msg>"] [--non-published] [--require-decision-review]
 
 Response lint — validate agent responses against stage-specific routing rules:
 
@@ -331,10 +332,13 @@ Use the same skill for these OpenSpec planning/writing modes:
 
 ## Workflow — Spec Ideation Authoring Flow
 
-The goal-spec workflow follows canonical stages 0–11. Each stage produces a
+The goal-spec workflow follows canonical stages 0–12. Each stage produces a
 machine-checkable artifact under `.goal-spec/changes/<change-name>/`.
 Deterministic scripts validate and transition; semantic artifacts are
 produced by role agents (collector, judge, writer, explainer, reviewer).
+Stages 0–11 cover spec authoring through handoff readiness. Stage 12 covers
+publish closeout: validation-first OpenSpec package publication to an upstream
+git remote.
 
 ### First-Response State Router (Stage 1.5–1.7)
 
@@ -736,6 +740,103 @@ fix mode.
 A **deterministic script** performs final validation. Output: `handoff-ready.json`.
 
 The change is ready for downstream Stage 2 planning via `goal-dag`.
+
+### 12. Publish Closeout
+
+After successful validation (Stage 11), the agent may run publish closeout to
+commit and push the OpenSpec change package to its upstream git remote.
+Publish closeout is **validation-first**: owned outputs are not staged until
+source-manifest.json and required change-explainer.html pass validation.
+
+**Deterministic script:**
+
+```bash
+<skill-dir>/scripts/openspec-publish-closeout <change-name> --project-root <project-root> [--remote <remote>] [--branch <branch>] [--commit-message "<msg>"] [--require-decision-review] [--non-published]
+```
+
+#### Owned-output-only staging
+
+Only files under `openspec/changes/<change-name>/` are considered owned outputs.
+Files under `.goal-spec/` (operational artifacts) are explicitly excluded from
+staging even when they fall under the owned path prefix.
+
+Required owned outputs (must pass validation before staging):
+
+- `source-manifest.json` — validated via `openspec-validate-source-manifest`
+- `change-explainer.html` — validated via `openspec-validate-explainer` (when required)
+
+#### Blocked conditions (fail closed with diagnostics)
+
+The script fails closed on any of these conditions and returns a JSON report
+with the blocked diagnostics:
+
+| Condition | Diagnostic code |
+|-----------|----------------|
+| Invalid or missing `source-manifest.json` | `invalid_source_manifest` |
+| Invalid or missing `change-explainer.html` | `invalid_change_explainer` |
+| Change directory not found | `change_directory_not_found` |
+| Unrelated dirty files outside owned paths | `unrelated_dirty_files` |
+| Ambiguous owned paths | `unrelated_dirty_files` |
+| Missing upstream tracking branch | `missing_upstream` |
+| Detached HEAD | `detached_head` |
+| Remote not configured | `missing_remote` |
+| Auth/network failure during push | `auth_failure` / `network_failure` |
+| Push rejection (non-fast-forward) | `push_rejected_non_fast_forward` |
+| Push rejection (other) | `push_rejected` |
+| Remote verification fails | `remote_verification_failed` |
+| Remote verification times out | `remote_verify_timeout` |
+| Push times out | `push_timeout` |
+| Commit creation fails | `commit_failed` |
+
+#### Workflow
+
+1. **Validation-first**: validate `source-manifest.json` and required
+   `change-explainer.html`. Fail closed with diagnostics if either is invalid.
+2. **Owned-path computation**: compute owned paths as
+   `openspec/changes/<change-name>/**`, excluding `.goal-spec/` paths.
+3. **Staging**: `git add` only owned paths.
+4. **Block check**: scan `git status --porcelain` for unrelated dirty files.
+   Block with diagnostics listing each unexpected modified/untracked path.
+5. **Commit**: create a git commit with a generated or provided message.
+6. **Non-force push**: `git push --no-force <remote> <branch>`.
+7. **Remote verification**: `git ls-remote <remote> <branch>` and confirm the
+   commit SHA is present in the remote ref output.
+8. **Final cleanliness check**: re-run `git status --porcelain` to confirm the
+   worktree is clean (excluding `.goal-spec/` paths).
+
+#### Non-published mode
+
+When `--non-published` is passed, the script skips all commit and push
+operations. The result is labeled `non_published` and diagnostics indicate
+that the closeout was explicitly non-published. This mode is useful for CI,
+dry-run validation, or workspaces where publishing is handled externally.
+
+#### Result modes
+
+| Mode | Meaning |
+|------|---------|
+| `published` | Owned outputs validated, committed, pushed, and verified on remote |
+| `no_changes` | Worktree was already clean; nothing to commit |
+| `blocked` | A blocking condition was detected; inspect `diagnostics[]` |
+| `non_published` | `--non-published` was set; commit/push skipped by explicit choice |
+
+#### Exit codes
+
+| Exit code | Meaning |
+|-----------|--------|
+| 0 | Mode is `published`, `no_changes`, or `non_published` |
+| 1 | Mode is `blocked` or a runtime error occurred |
+
+#### Stages boundary
+
+Publish closeout is a deterministic, non-role operation. It does not:
+
+- Generate Stage 2 execution-plan artifacts (`.dag.json`, `GoalDagSpec`, etc.).
+- Modify `goal-dag`, `goal-runner`, or `goal-contract`.
+- Execute implementation tasks or runtime behavior.
+- Decide worktree allocation, model routing, subagent scheduling, or runtime
+  validation.
+- Modify `.goal-spec/` operational state.
 
 ### Artifact freshness
 
@@ -1468,7 +1569,12 @@ When done, report:
 - skipped validations and why;
 - assumptions and open questions;
 - quality-rubric verdict;
-- recommended next step: no-build action, revise scope, review, implement, or archive readiness.
+- recommended next step: no-build action, revise scope, review, implement, archive readiness, or publish closeout.
+
+After handoff readiness, the recommended next step may be **publish closeout**,
+which commits and pushes the validated OpenSpec change package to its upstream
+git remote. Use `scripts/openspec-publish-closeout` for the deterministic
+publish step.
 
 ## Hard guardrails
 
@@ -1488,5 +1594,7 @@ When done, report:
 - Do not claim validation is unavailable only because the target repo lacks
   `openspec/scripts/*`; use the bundled writer helper.
 - Do not archive without explicit user instruction.
+- Do not publish closeout without validation passing first. Run publish closeout
+  as a deterministic final step after handoff readiness is confirmed.
 - Do not use archive history as current authority unless asked for historical
   rationale.
